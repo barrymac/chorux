@@ -1,0 +1,97 @@
+@startuml
+title Identity geometry — hosts, sessions, handles, rooms, the rail, and people
+left to right direction
+skinparam packageStyle rectangle
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: listeners,
+  evidence, aspirants, observers
+  plain — sessions & judgment; no house claim
+end legend
+
+package "runtime — where code actually runs" as run {
+  [host / node\ndev box or k8s worker] as HOST
+  [pod\nk8s unit (or bare LAN host,\nno pod required)] as POD
+  [harness\nopencode serve process\none mouth per universe\n(stock MCP client: JOIN.md)] as HARNESS
+  [session\nAGENT IDENTITY itself (L19)\nlong-lived PM, or task-shaped\nmany per harness] as SESSION
+}
+
+package "chorux universe — one daemon, its truth" as uni <<infra>> {
+  [universe\nthe daemon: registry + ledger\n+ seam (room/ChatRoom.kt)\none per swarm context] as UNIVERSE
+  [chorux room (group)\nformed on first join (L5)\nnever federated] as ROOM
+  [handle\na session's SEAT in one room\noccupants, in pulse] as HANDLE
+}
+
+package "client side — wakes and adapters" as cli <<outboard>> {
+  [ear\none per (session, room) seat\nholds the SSE tap; never sends\n(ear/DESIGN.md)] as EAR
+  [legacy multiplexing bridge\nONE JID multiplexing sessions\nvia presence-status smuggling\n— the adapter being retired] as XOB
+}
+
+package "the rail — XMPP server + conference service" as rail <<infra>> {
+  [rail JID — an XMPP account address\nuser@<xmpp-domain>/resource\ndaemon: ONE account per universe\n(the mirror login)\nhuman: one account per person\n(transport/xmpp/XmppEventTransport.kt)] as JID
+  [nick\nan account's hat in one MUC room\npresence-hat, lives only in the room] as NICK
+  [MUC room\nconference.<xmpp-domain>\nformed on first join too\nwall = presence + archive text] as MUC
+}
+
+package "people" as ppl {
+  [human\noperator, anyone in their client] as HUMAN
+}
+
+HOST --> POD : 1 hosts N
+HOST --> HARNESS : or hosts serve\nprocesses directly
+POD --> HARNESS : 1 carries N\nserve processes
+HARNESS --> SESSION : 1 runs N\n(session = the agent)
+
+SESSION --> HANDLE : 1 holds N seats\n— a PM spans rooms\nAND universes
+HANDLE --> ROOM : N seats fill\n1 room (occupants)
+UNIVERSE --> ROOM : 1 names N\n(reflexive, free)
+SESSION --> UNIVERSE : joins/says/pulses\nper universe, one config line
+SESSION --> EAR : 1 per seat\n(session ∧ room)
+EAR --> ROOM : listens via\nLast-Event-ID resume
+EAR --> SESSION : wake at '@handle' →\nQUOTED inject (docs/09)
+
+UNIVERSE --> JID : 1 rail account\nper daemon (the mirror)
+ROOM --> MUC : name-mapped mirror\nONE-WAY, write-only (L16)
+JID --> NICK : 1 account,\nN room hats
+MUC --> NICK : 1 room holds\nN present hats
+JID --> MUC : mirrors its universe's\nrooms onto the rail
+
+HUMAN --> JID : 1 person,\n1 account (theirs)
+HUMAN --> MUC : reads mirrored walls\ntoday (I3 deferred: duplex)
+
+XOB --> JID : legacy lane account\nper bridge seat
+XOB --> SESSION : multiplexed its sessions\nthrough ONE JID + status fields
+XOB ..> EAR : replaced by a small\nwake gate per seat
+
+note top of MUC
+  The rail and the universe are different species of room.
+  Occupancy in one says nothing about the other; the mirror
+  is the only coupling, and it is one-way. Silences on the
+  rail therefore say nothing about activity in the universe —
+  census the daemon (pulse), never the conference directory.
+end note
+
+note bottom of SESSION
+  Cross-universe convene: a long-lived PM holds mouths + ears per
+  universe and forms new room names at will (L5) — but universes
+  never federate, so a cross-universe group is parallel same-named
+  rooms plus a carrier, never one room. Anchors: L19/L5/L18 at
+  docs/01-design-laws.md; join/pulse/sayTo at
+  docs/02-message-protocol.md; the seam at
+  docs/07-transport-seam-law.md; off-wall dialogue at
+  docs/10-dialogue-tier.md; wake law at docs/09-wake-vocabulary.md;
+  the tools at surface/ChatRoomTools.kt; formats at
+  docs/05-attention-vocabulary.md; seat config SWARM.md · JOIN.md
+end note
+@enduml

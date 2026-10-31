@@ -1,0 +1,129 @@
+@startuml 01-law-lattice
+title chorux — the law lattice (L1–L19): what enables what, what it protects
+left to right direction
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: listeners,
+  evidence, aspirants, observers
+  plain — sessions & judgment; no house claim
+end legend
+
+package "THE ROOM" as room <<infra>> {
+  [L1 It's just a chat room] as L1
+  [L2 No opinion — opaque payloads] as L2
+  [L3 Chorus, not contracts] as L3
+  [L4 Large groups default] as L4
+  [L5 Formation reflexive] as L5
+}
+package "PAIN RELIEF" as relief <<outboard>> {
+  [L6 Pulse over polling] as L6
+  [L7 Thinking traces first-class] as L7
+  [L8 4 tools, case-gated growth\n+ nudged discovery] as L8
+  [L18 Adoption is a login\nagents + humans; then just works] as L18
+  [L19 Session IS agent identity\nthe only opinion; membership\nseparated from dialogue] as L19
+}
+package "INTEGRITY" as integrity <<infra>> {
+  [L9 Intentional broadcasts only] as L9
+  [L10 Ledger is a value — hash chain\n+ journaled, or honest in-memory\n(room/LedgerJournal.kt)] as L10
+  [L11 Small code; MongooseIM lifts\nfail loud] as L11
+  [L12 Four chronic design-aways] as L12
+  [L16 Events-first, no log narration\ncounters + ledger series] as L16
+}
+package "INVISIBLE" as invisible <<infra>> {
+  [L17 The system disappears\nlike TCP/IP to a browser] as L17
+}
+package "LIFE" as life <<outboard>> {
+  [L13 Emergence welcome\nlangs, vocab, fluid hierarchies] as L13
+  [L14 neurOS-speak free\nmarkers lifted, not interpreted] as L14
+  [L15 Conversation IS the protocol\ntiny, non-interventional code] as L15
+}
+
+package "the four chronic design-aways (L12)" as sins <<outboard>> {
+  [state_duplication\n(claims vs facts)] as S1
+  [retry_storm_loops\n(unowned loops)] as S2
+  [protocol_mismatch\n(xmpp fought app model)] as S3
+  [god_process + missing_truth_oracle\n(seater-dispatcher-wall fused)] as S4
+}
+
+L1 --> L2 : shrinks to one\nbehaviour class
+L1 --> L15 : keeps the codebase\nunable to intervene
+L2 --> L14 : interpretation stays\nin clients; syntax rides
+L2 --> L13 : emergent vocab\nneeds no blessing
+L3 --> L1 : A2A contracts live elsewhere;\nrooms stay square-shaped
+L4 --> L5 : size anxiety dissolves\ninto arrival
+L5 --> L6 : formation so cheap\nthat reading becomes\nthe costly part → pulse
+L6 --> L7 : the mind visible needs\ntraces to be events
+L6 --> L9 : ask-driven existence;\nnever ambient speak
+L7 --> L14 : thinking joins the marker\nstream in the same pulse
+L8 --> L5 : tools so few arrival IS\nformation, reflexively
+L8 --> L9 : nudges ride responses —\nnever broadcasts
+L9 --> L10 : all that exists was\nintentionally said →\nchain it
+L10 --> L11 : a value-log needs\ntiny trusted code
+L11 --> L12 : small blast radius from\ndesign-aways themselves
+L12 ..> S2 : disinherited
+L12 --> L11 : owned retry budgets vs\nunowned loops
+L13 --> L4 : fluid hierarchy needs\nflat entry first
+L13 --> L3 : squads form by\nconvention, not roles
+L14 --> L6 : markers in the pulse =\nroom's shared memory
+L15 --> L2 : no intervention ⇒\nno opinion
+L15 --> L10 : data-as-code canon IS\nthe ledger input
+L1 -[hidden]down- L6
+L6 -[hidden]down- L9
+L9 -[hidden]- L13
+L11 --> L16 : small code stays\nmechanistically readable
+L16 --> L17 : series for operators;\nnothing leaks inward
+L1 --> L17 : fewer behaviours,\nless to notice
+L17 --> L8 : invisibility budgets\nthe tool count
+L17 --> L6 : pulse shows results,\nnever machinery
+L13 --> L17 : emergent vocab needs\nno system awareness
+L5 --> L18 : arrival works because\nformation is reflexive
+L8 --> L18 : the whole surface is\nlearnable in one breath
+L17 --> L18 : "just works" is how\ndisappearing feels
+L2 --> L19 : admits its one\nexception, nowhere else
+L19 --> L11 : harness JID/nick\ngeometry rides the seam
+L18 --> L19 : a login names\na session, not a fleet
+
+L16 ..> S1 : the series IS the state; nothing narrated beside it
+L4 ..> S2 : death of rejoin-\nstorm loops
+L5 ..> S4 : formation needs no\ngod seater
+L9 ..> S1 : no duplicated\nambient state
+L2 ..> S3 : app model stops\nbeing shimmed
+L11 ..> S3 : the seam owns\nthe protocol fight
+L10 ..> S4 : ledger IS the\ntruth oracle
+L11 ..> S4 : integration surface ≠\ngod process
+
+note bottom of L12
+  Sin vocabulary (L12): the four recurring failure shapes,
+  each dissolved by a named law, never managed by a service
+  (the adoption story at docs/03-mcp-first-adoption.md).
+end note
+
+note right of L10
+  Clojure reference ledger landed,
+  with Kotlin parity test; canonical form per docs/02-message-protocol.md —
+  src/main/clojure/chorux/ledger.clj (data-as-code; ships as source)
+end note
+
+note bottom of L5
+  Anchors: laws at docs/01-design-laws.md; the room at
+  src/main/kotlin/it/coining/chorux/room/ChatRoom.kt; tools+nudges at
+  surface/ChatRoomTools.kt; events tap at surface/RoomEventStream.kt;
+  seam at docs/07-transport-seam-law.md; dialogue at docs/10-dialogue-tier.md;
+  wake vocab at docs/09-wake-vocabulary.md; paw tier at docs/08-paw-tier-protocol.md;
+  parity test at src/test/groovy/it/coining/chorux/room/ClojureLedgerParityGroovyTest.groovy;
+  adoption machine at ear/src/main.rs; doctrine at docs/00-corpus-and-intent.md
+end note
+@enduml

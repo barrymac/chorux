@@ -1,0 +1,83 @@
+@startuml 03-shapes-flight-deck
+title chorux — shapes of messaging → one core: the day-one flight deck
+skinparam packageStyle rectangle
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: listeners,
+  evidence, aspirants, observers
+  plain — sessions & judgment; no house claim
+end legend
+
+package "dialects of the same communication (catalogue-classified)" as dialects <<outboard>> {
+  [messaging DSLs\nscripts + bespoke harnesses\nxmpp-say, telegram bridges] as D1
+  [graph protocols\nA2A — contracts live here, not here] as D2
+  [MCP — THE bridge\nstreamable HTTP, a config line\n(the adoption machine)] as D3
+  [tools surfaces\nany agent with @Tool] as D4
+  [web dashboards\nstrophe.js → translation nudge] as D5
+  [transports\nmellium.im / go-xmpp / slixmpp\n(the lineage the seam learned from)] as D6
+  [transports: revolt & soup\nMQTT / WebSockets / SSE / webhooks / NATS] as D7
+  [persistence & seat-sorcery\naudit logs, affiliation masters] as D8
+}
+
+package "chorux — day-one flight deck (small by law)" as core <<infra>> {
+  [ChatRoomTools\njoin · say · pulse · sayTo\nnudges inside responses\n(surface/ChatRoomTools.kt)] as T
+  [RoomRegistry\nformOrJoin — arrival=formation] as R
+  [ChatRoom × N\noccupants · bounded history\nthoughts · lifted links · ledgerHead\n(room/ChatRoom.kt)] as RM
+  [hash-chain ledger\nvalue-log, Clojure lineage\ncanonical form per docs/02-message-protocol.md] as LG
+  [events-first observability\nseam/pulse taps attach outboard\nNO traffic log lines] as OB
+  [EventTransport seam\nin-memory + LIVE XMPP/MUC (Smack)\nmirror supervision; docs/07-transport-seam-law.md\n(transport/xmpp/XmppEventTransport.kt)] as SEAM
+  [EDN journal (shipped)\nappend+fsync before mutate;\nreplay before the room opens\n(room/LedgerJournal.kt)] as I2
+}
+
+package "deferred integrations (classified, not forgotten)" as deferred <<outboard>> {
+  [stanza translation → bridges\nhumans entirely in, via translation\n(catalogue §4, docs/03-mcp-first-adoption.md)] as I3
+}
+
+D1 --> T : say/intents ride FREE-VOCAB
+D1 --> D4 : bespoke harnesses\nbecome tool surfaces
+D2 -[hidden]right- D3
+D2 ..> T : poached patterns:\ncards→nudges, streams→explicit
+D3 --> T : 2-line exposure\n(src/main/.../spring wiring)
+D4 --> D3 : @Tool surfaces land\non the bridge
+D4 --> T : progressive discovery via nudges
+D5 --> I3 : humans ENTIRELY in, via translation
+D5 --> D7 : browsers ride the soup aspirants\n(SSE / websockets)
+D6 --> SEAM : lineage informed the seam\n(XMPP/MUC via Smack landed)
+D7 -[dashed]-> SEAM : abandoned aspirants
+D7 --> D6 : same transport family,\ndifferent fate
+D8 -[dashed]-> LG : subsumed by value-log (L10)
+D8 ..> I2 : audit-log lineage IS\nthe journal tooth's root
+
+T --> R
+R --> RM : shared @Synchronized spine
+RM --> LG
+RM --> OB
+RM --> SEAM
+OB --> SEAM : the tap rides the seam\n(events.stream, RoomEventStream.kt)
+LG ..> I2 : append+fsync\nbefore mutate
+I2 --> LG : the journal resumes\nagainst the last head
+I3 --> D1 : translation bridges rejoin\nthe script lineage
+
+note right of OB
+  shapes fold through ALL FIVE components —
+  core stays small by law (L11): mechanistic
+  interpretability is a given (L16) —
+  laws at docs/01-design-laws.md
+end note
+note bottom of SEAM
+  methods speak the domain language, not the wire:
+  emitSaid(group, handle, text|formats|links, at)
+  = "an intended broadcast must be transported"
+end note
+@enduml

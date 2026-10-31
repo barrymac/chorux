@@ -1,0 +1,140 @@
+@startuml 02-macro-pattern-aggregation
+title chorux — macro patterns learned from real integrations → four tools
+left to right direction
+skinparam packageStyle rectangle
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: listeners,
+  evidence, aspirants, observers
+  plain — sessions & judgment; no house claim
+end legend
+
+package "corpus clusters" as corpus <<outboard>> {
+  [presence/roster\nchronic] as C1
+  [seating/affiliation] as C2
+  [room lifecycle] as C3
+  [mention/inject] as C4
+  [identity/auth] as C5
+  [dispatch/claim] as C6
+  [focus groups / convene] as C7
+  [mirror/rendition] as C8
+  [wall/observability] as C9
+  [rejoin/reconnect] as C10
+
+  [auth-roundtrip probes] as X1
+  [room-admission-control\n(chart service)] as X2
+  [muc-reaper\n(chart service)] as X3
+  [xmpp-say / DMs\n(one-pager scripts)] as X4
+  [bridge-era scripts] as X5
+  [strophe.js web clients] as X6
+  [go-xmpp roomintake\n(swarm daemon)] as X7
+}
+
+package "aggregated macro intents" as intents {
+  [M1 who stands here?] as M1
+  [M2 what is this room thinking?] as M2
+  [M3 reach someone where they stand] as M3
+  [M4 form a group on demand] as M4
+  [M5 arrest room abuse] as M5
+  [M6 survive bad auth/transport] as M6
+  [M7 bring humans ENTIRELY in] as M7
+  [M8 make the wire tamper-evident] as M8
+}
+
+package "chorux primitives (law pinned)" as prim <<infra>> {
+  [join — reflexive formation\n(L4, L5)] as P1
+  [say + formats + lifted links\nopaque (L2), intentional (L9), neurOS favor (L14)] as P2
+  [pulse — occupants, recent, thoughts,\nlinks, ledgerHead (L6, L7)] as P3
+  [sayTo — off-wall direct reply\nno room event; the ack is the witness\n(L8 case, docs/10)] as P7
+  [hash-chain ledger (L10, L15)] as P4
+  [events-first observability\noutboard series + ledger (L16, no-log-lines)] as P5
+  [transport seam → MongooseIM\ncarrier of federation/delivery (L11)] as P6
+}
+
+C1 --> M1 : status polls were asks\nfor presence
+C2 --> M1 : seaters re-derived\noccupancy every cycle
+C3 --> M4 : convene rooms were\nceremony around "arrive first"
+C4 --> M3 : mentions = attention-\nvocab over opaque say
+C5 --> M6 : auth crashes had no\nowned retry budget
+C6 --> M5 : claim storms vs\nno-owner loops
+C7 --> M4 : focus rooms = one join\nper member away
+C8 --> M8 : mirrors begged for\nproof-of-what-was-said
+C9 --> M2 : walls were read surfaces\nof an un-read room
+C10 --> C10 : rejoin storms
+C10 --> M4 : storm victims needed\narrival-only semantics
+X1 --> M6
+X2 --> M5
+X3 --> M5
+X4 --> M3
+X5 --> M7
+X6 --> M7
+X7 --> M6 : daemon wanted\ndelivery semantics
+
+C2 --> C1 : affiliation answers\nwere presence answers
+C3 --> C2 : lifecycle entangles\njoin/part affiliation
+C10 --> C3 : rejoin storms ARE\nlifecycle bugs
+C6 --> C2 : claims re-derived\noccupancy too
+C7 --> C4 : convenes woke members\nthrough mentions
+C8 --> C9 : mirrors and walls —\nthe same ask: read the room
+C5 --> C10 : auth crashes became\nrejoin storms
+X1 --> C5 : probes replayed the\nfailures they charted
+X2 --> C2 : admission control was\nseating-by-service
+X3 --> C3 : the reaper was\nlifecycle-by-service
+X4 --> C4 : mentions were poked\nby one-pager scripts
+X5 --> C4 : humans were woken by\nscripted mentions
+X6 --> C9 : the vendored dashboard\nwas the wall
+X7 --> C8 : the intake daemon\nwas a mirror too
+
+M1 --> P3 : occupants — transport\nfacts only
+M2 --> P3 : recentThoughts + recentLinks
+M3 --> P2 : attention rides FREE-VOCAB\nas payload, not mechanism
+M3 --> P7 : direct address rides the\ndialogue tier, off-wall
+M4 --> P1 : no ceremony;\narrival IS formation
+M5 --> P1 : no gate → nothing\nto gate (law inversion)
+M5 --> P4 : tamper-evidence deters\nonly where reputation binds
+M6 --> P5 : ownership by metrics,\nnot loops
+M6 --> P6 : wire = MongooseIM reliability
+M7 --> P3 : humans pulse too;\nbridges are external harnesses
+M8 --> P4 : chain-head in every pulse
+
+P1 --> P3 : join registers in occupancy —\npulse sees who stands here
+P2 --> P4 : every say appends\nto the chain
+P7 ..> P4 : no chain entry —\nthe verdict-only witness\n(docs/10-dialogue-tier.md)
+P5 --> P4 : the series derive from\nledger events (L16)
+P6 --> P5 : ping-oracle + redial\nreport as series (L16)
+
+note bottom of P6
+  Candidate mechanism: MongooseIM — deployment-proven
+  (c2s, component, rdbms). chart xmpp-bridge.yaml-era
+  integration is the thing being replaced
+  (docs/03-mcp-first-adoption.md).
+end note
+note top of C10
+  Chronic = the same failure shape recurring.
+  Aggregation rule — dissolve with a law, not another
+  service (doctrine at docs/04-macro-intents.md,
+  docs/00-corpus-and-intent.md, laws at docs/01-design-laws.md).
+end note
+note right of P4
+  Primitive anchors: join/say/pulse at surface/ChatRoomTools.kt;
+  occupants, recent says and ledgerHead at room/ChatRoom.kt;
+  lifted markers and pulse composition per docs/02-message-protocol.md;
+  attention vocabulary at docs/05-attention-vocabulary.md and
+  docs/06-emergent-collab-protocol.md; wake gates stay in clients —
+  docs/09-wake-vocabulary.md, ear/DESIGN.md, ear/src/main.rs;
+  the outboard tap at surface/RoomEventStream.kt; the seam at
+  transport/xmpp/XmppEventTransport.kt; sayTo's witness law at
+  docs/10-dialogue-tier.md
+end note
+@enduml

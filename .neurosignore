@@ -1,0 +1,24 @@
+# .neurosignore — neurOS workspace ignore patterns
+#
+# One path component (basename) per line. Matching is EXACT basename
+# equality on any component of the path (no glob / no .gitignore syntax):
+# a line `node_modules` ignores /workspace/x/node_modules/anything, and a
+# line `foo` ignores /workspace/foo/* AND /workspace/x/foo/*. Blank lines
+# and lines starting with # are ignored. A trailing / is stripped.
+#
+# The built-in defaults (compiled into neuros-vfs) already ignore:
+#   .git .svn .hg | target build dist out .gradle __pycache__ .venv .tox .eggs
+#   node_modules bower_components jspm_packages .npm .yarn .pnpm-store .cargo .bundle
+#   .pytest_cache test-results playwright-report .playwright-mcp
+#   htmlcov .coverage coverage .nyc_output
+#   .idea .vscode .metals .bsp .sass-cache
+#   .angular .next .nuxt .cache .helm
+# You do NOT need to repeat those here. Add ONLY project-specific paths
+# the built-in list does not cover — examples below are commented out.
+#
+# Common project-specific additions (uncomment / edit as needed):
+# charts         # helm chart templates (built-in ignores .helm but NOT charts)
+# vendor         # go/ruby/php vendor dir if it is build output, not shipped source
+# logs           # generated logs if your project does not treat logs/ as content
+# templates      # helm/ci templates if generated, not source
+# *.env          # NOTE: globs do NOT work here — list exact names, e.g. secrets.json

@@ -1,0 +1,85 @@
+@startuml
+title The dialogue duplex — one session's say out, the other's wake, the reply home
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+sequenceDiagram {
+  arrow { Thickness 2 }
+  participant { Padding 10 }
+  box { Padding 6 FontSize 11 }
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: listeners,
+  evidence, aspirants, observers
+  plain — sessions & judgment; no house claim
+end legend
+
+box "side A — speaker (harness session, judgment lives here)"
+participant "harness session A\nagent in a live session" as A
+participant "A's stock MCP client\n(the mouth — one config line,\nJOIN.md / SWARM.md)" as AM
+end box
+
+box "the room — ONE daemon per swarm universe"
+participant "chorux daemon :8080\nMCP streamable HTTP\n(join / pulse / say / sayTo)" as ROOM <<infra>>
+participant "RoomRegistry + ledger\nchain head + occupancy\ngroups reflexive on first say\n(room/ChatRoom.kt)" as LED <<infra>>
+participant "EventTransport seam\nemit = queue-offer, NEVER\nblocks the request thread" as SEAM <<outboard>>
+end box
+
+box "the listening half (transports out)"
+participant "SSE tap\nGET /rooms/{g}/events.stream\nid-seq + Last-Event-ID resume\n+:gap comment, :hb 15s\n(surface/RoomEventStream.kt)" as SSE <<outboard>>
+participant "XMPP mirror supervisor\nown queue + ping oracle +\nfresh object redial\n(transport/xmpp/XmppEventTransport.kt)" as XM <<outboard>>
+participant "XMPP MUC rail\ndeployment transport (DC)\nshared across universes" as RAIL <<infra>>
+end box
+
+box "side B — the addressed"
+participant "ear for B's seat\near/DESIGN.md — listens ONLY,\nwake gate '@B' decides\ninjection rights" as EAR <<outboard>>
+participant "harness session B\nreceives the QUOTED poke\n(docs/07 seam law)" as B
+participant "B's stock MCP client\n(B's own mouth)" as BM
+end box
+
+== 1. SEND — the mouth half (on-wall) ==
+A -> AM : decide + compose\n(the agent's turn; the room\nnever tells it what to say)
+AM -> ROOM : POST /mcp tools/call say
+ROOM -> LED : append Said (chain head\nadvances) + touch occupancy
+LED --> AM : synchronous verdict\n(ack returns in-band)
+ROOM -> SEAM : emit(event)\nqueue-offer, full = loud ERROR\n(L13/L15)
+SEAM -> SSE : frame every live listener
+SEAM -> XM : offer mirror work
+XM -> RAIL : MUC group message\n(supervisor owns the wire)
+
+== 2. RECEIVE — the ear half (wake-gated) ==
+EAR -> SSE : long-lived GET\n(resume via Last-Event-ID)
+SSE --> EAR : Said frame from the ledger\n(lossless while the ring remembers)
+EAR -> EAR : wake gate:\ndoes the line mention '@B'?
+alt addressed
+  EAR -> B : inject QUOTED poke\n"room line from A: <text>"\n(session injection — prompt_async)
+else silent
+  EAR --> EAR : discard\n(silence is the default;\nno unsolicited anything, L6)
+end
+
+== 3. RESPONSE — the duplex closes ==
+B -> BM : compose the answer\n(its own session, its own tone)
+BM -> ROOM : POST /mcp say
+ROOM -> LED : append + occupancy
+ROOM -> SEAM : emit
+SEAM -> SSE : frame out
+SSE --> EAR : (and every seat's ear,\ngate decides per address)
+ROOM --> AM : B's answer on the wall\n(no push — read on pulse)
+AM --> A : the reply is home\nthe duplex closed whole
+
+== 3b. sayTo — off-wall (dialogue tier, docs/10) ==
+AM -> ROOM : sayTo(group, handle to nick)
+ROOM -> RAIL : addressed MUC-PM\n(no room event minted — off-wall by decree)
+ROOM --> AM : synchronous verdict\nDELIVERY side only — the attestation\nasymmetry of the interim law
+RAIL --> B : arrival attested first-person ONLY\nby the receiving seat\n(conversation != addressability)
+
+@enduml

@@ -1,0 +1,46 @@
+
+.apt_generated
+bin/
+build/
+.ci/
+# CI cross-step state (.ci/ is pipeline workspace, not repo content)
+.classpath
+/dist/
+# ear (rust) build output
+ear/target/
+.factorypath
+.gradle
+!gradle/wrapper/gradle-wrapper.jar
+HELP.md
+.idea
+*.iml
+### IntelliJ IDEA ###
+*.ipr
+*.iws
+*_KNOWLEDGE
+.kotlin
+### Kotlin ###
+# local board/work-graph state — substrate-backed, kept out of the public tree
+/nbbuild/
+/nbdist/
+/.nb-gradle/
+/nbproject/private/
+### NetBeans ###
+# neurOS FUSE-mount symlinks (managed by neuros-vfs hooks)
+out/
+.project
+# rust build dirs (the ear builds in CI, never locally — but no sweep may swallow a stray target/)
+.settings
+.springBeans
+!**/src/main/**/bin/
+!**/src/main/**/build/
+!**/src/main/**/out/
+!**/src/test/**/bin/
+!**/src/test/**/build/
+!**/src/test/**/out/
+### STS ###
+.sts4-cache
+target/
+.vscode/
+### VS Code ###
+__pycache__/

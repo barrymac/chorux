@@ -1,0 +1,105 @@
+@startuml 04-outboard-observability
+title chorux — observability attaches OUTBOARD; the room disappears (L16/L17/L18)
+left to right direction
+skinparam packageStyle rectangle
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: listeners,
+  evidence, aspirants, observers
+  plain — sessions & judgment; no house claim
+end legend
+
+package "observer vocabulary (patterns portable,\nevery specific re-grounded)" as vocab <<outboard>> {
+  [retrieval effectiveness\nRecall@K · NDCG · subgraph coverage\npath completeness] as V1
+  [reasoning efficiency\nstep reduction (RSR) · tool-call\nreduction · ReAct convergence] as V2
+  [latency feel\np50/p95/p99 · TTFT · NET\ndelta(retrieval vs reasoning)] as V3
+  [truthful correctness\nfaithfulness · hallucination\nvs recall join] as V4
+  [memory health\nhit rate · staleness · drift] as V5
+  [cross-stream correlation (CEP)\ntickless, stateful, per-session\npattern over sequences] as V6
+}
+
+package "the room — unchanged, unopinionated" as room <<infra>> {
+  [say — opaque payloads\n(L2)] as SAY
+  [declared formats — free labels\n+ lifted wiki-markers\n(L13, L14)] as FMT
+  [pulse — the room's mind\n(L6, L7)] as PULSE
+  [hash-chain ledger —\ntamper-evident replay source\n(L10)] as LED
+  [4 tools, a login, just works\n(L8, L18)] as ADOPT
+}
+
+package "outboard observers — clients, NEVER core" as obs <<outboard>> {
+  [subscriber-as-occupant\njoins like anyone, reads pulse] as OBS1
+  [seam tap at EventTransport\ntees events; rooms never know\n(L11, L17)] as OBS2
+  [derived series + dashboards\nall five families + correlations\nbuilt outside (L16)] as DASH
+}
+
+package "named traps — law violations" as traps <<outboard>> {
+  [metrics dialect in core or\nrequired payload schema] as T1
+  [REQUIRED agent instrumentation] as T2
+  [named observability stack\nin any protocol surface] as T3
+  [correlation engine inside\nchorux core] as T4
+  [invisible = unobservable\n(wrong axis)] as T5
+}
+
+V1 --> DASH
+V2 --> DASH
+V3 --> DASH
+V4 --> DASH
+V5 --> DASH
+V6 --> DASH : fires on event arrival,\nnever on a tick
+SAY --> FMT : event taxonomy rides as\nfree vocabulary, not schema
+FMT --> OBS1
+PULSE --> OBS1 : reads like any occupant —\nthe room never knows (L17)
+LED --> OBS2 : chain head anchors replay\nand audit externally
+ADOPT --> PULSE : a login + one call is\nthe whole on-ramp
+OBS1 --> DASH
+OBS2 --> DASH
+
+V1 --> V4 : recall bounds faithfulness
+V5 --> V1 : staleness poisons\nrecall denominators
+V6 --> V2 : per-session windows\nmake step-counts fair
+V3 .[#blue].> LED : the p99 is the wall's,\nmeasured against the ledger
+LED --> DASH : tamper-evident replay\nfeeds every series
+
+T3 --> T1 : a named stack IS\na dialect
+T4 --> T1 : an engine in core needs\nschema to eat
+T1 --> T3 : same sin — schema level\nvs surface level
+T2 --> T5 : if it must be instrumented,\nit stopped disappearing
+
+T1 ..> SAY : violates L2, L14
+T2 ..> ADOPT : violates L17, L18
+T3 ..> SAY : violates L2
+T4 ..> OBS2 : violates L11 — engines\nlive next to dashboards
+T5 ..> OBS1 : violates L16 — operators\nsee everything anyway
+
+note bottom of OBS2
+  Deployment reality: existing deployment runs MongooseIM
+  (Erlang/OTP lineage, chart-proven). Room-per-swarm
+  naming is the natural grouping AND scaling boundary —
+  scaling is the transport's concern, never the room's.
+end note
+note top of DASH
+  High-cardinality identity (session/query hashes)
+  rides PAYLOADS, never index labels — the label/payload
+  split arrived at independently.
+end note
+note bottom of T1
+  Anchors: laws L1–L19 at docs/01-design-laws.md; mined
+  macro patterns at docs/04-macro-intents.md; the tap at
+  surface/RoomEventStream.kt; the seam at xmpp/XmppEventTransport.kt;
+  the ledger room at room/ChatRoom.kt; the tools at
+  surface/ChatRoomTools.kt; seam law at docs/07-transport-seam-law.md;
+  protocol at docs/02-message-protocol.md; the deployment doctrine at
+  docs/00-corpus-and-intent.md; emergent vocab at docs/06-emergent-collab-protocol.md
+end note
+@enduml

@@ -1,0 +1,361 @@
+# .woodpecker.yml — chorux CI
+#
+# This repo is PUBLIC: no internal hostnames, IPs, or credentials in this
+# file — every internal value arrives through repo secrets (absent on PRs by
+# woodpecker policy) or CI_ built-ins. Missing values fail loud with the
+# secret named; nothing defaults silently.
+#
+# Woodpecker laws (from fleet porting history):
+# - One shell per `commands:` item: multi-command units are a single `|`
+#   block scalar.
+# - $VAR for shell expansion; never a dollar-brace sequence anywhere in
+#   this file, not even in comments — the template engine pre-expands them.
+# - Secrets are NOT auto-injected: each consuming step declares them under
+#   `environment:` with from_secret.
+# - Steps run in containers over a shared workspace volume; cross-step state
+#   travels as files under .ci/.
+#
+# Secrets consumed (repo settings):
+#   REGISTRY_HOST     — registry hostname images are pushed to
+#   REGISTRY_LAN_IP   — optional /etc/hosts pin when cluster DNS can't
+#                       resolve REGISTRY_HOST
+#   GITEA_HOST        — forge host used for the release-tag push remote
+#   GITEA_PUSH_TOKEN  — token for pushing release tags (CI_NETRC_* fallback)
+
+when:
+  - event: [push, pull_request]
+
+steps:
+  verify:
+    image: gradle:9-jdk21
+    commands:
+      - |
+        mkdir -p .ci
+        ./gradlew --no-daemon test > .ci/verify.log 2>&1
+        RC=$?
+        tail -c 4000 .ci/verify.log
+        exit $RC
+
+  image-build-push:
+    image: gcr.io/kaniko-project/executor:v1.23.2-debug
+    when:
+      - event: push
+        branch: main
+    environment:
+      REGISTRY_HOST:
+        from_secret: REGISTRY_HOST
+      REGISTRY_LAN_IP:
+        from_secret: REGISTRY_LAN_IP
+    commands:
+      - |
+        set -euo pipefail
+        [ -n "$(printenv REGISTRY_HOST)" ] || { echo "::error::REGISTRY_HOST secret missing"; exit 1; }
+        if ! getent hosts "$(printenv REGISTRY_HOST)" >/dev/null 2>&1; then
+          [ -n "$(printenv REGISTRY_LAN_IP)" ] || { echo "::error::REGISTRY_HOST unresolvable and no REGISTRY_LAN_IP pin secret"; exit 1; }
+          echo "$(printenv REGISTRY_LAN_IP) $(printenv REGISTRY_HOST)" >> /etc/hosts
+        fi
+        VERSION=$(grep -E '^version = "' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        [ -n "$VERSION" ] || { echo "::error::could not parse version from build.gradle.kts"; exit 1; }
+        VERSION=$(echo "$VERSION" | sed 's/-SNAPSHOT$//')
+        echo "$VERSION" > .ci/version 2>/dev/null || { mkdir -p .ci && echo "$VERSION" > .ci/version; }
+        [ -n "$VERSION" ] || { echo "::error::empty version after snapshot strip"; exit 1; }
+        mkdir -p /kaniko/.docker
+        printf '{"auths":{}}' > /kaniko/.docker/config.json
+        /kaniko/executor \
+          --context "dir://$CI_WORKSPACE" \
+          --dockerfile Dockerfile \
+          --destination "$(printenv REGISTRY_HOST)/chorux:$VERSION" \
+          --destination "$(printenv REGISTRY_HOST)/chorux:$CI_COMMIT_SHA" \
+          --build-arg "GIT_SHA=$CI_COMMIT_SHA" \
+          --cache=true \
+          --cache-repo "$(printenv REGISTRY_HOST)/chorux/cache" \
+          --cleanup
+        echo "pushed chorux:$VERSION and chorux:$CI_COMMIT_SHA"
+
+  tag-release:
+    image: alpine/git:2.45.2
+    when:
+      - event: push
+        branch: main
+    environment:
+      GITEA_HOST:
+        from_secret: GITEA_HOST
+      GITEA_PUSH_TOKEN:
+        from_secret: GITEA_PUSH_TOKEN
+    commands:
+      - |
+        # Honest idempotency: tag releases re-run safely; push only when the
+        # tag is new. Tag events are filtered out at the top-level `when`, so
+        # this push never re-triggers this pipeline.
+        set -euo pipefail
+        VERSION=$(grep -E '^version = "' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        [ -n "$VERSION" ] || { echo "::error::could not parse version from build.gradle.kts"; exit 1; }
+        VERSION=$(echo "$VERSION" | sed 's/-SNAPSHOT$//')
+        [ -n "$VERSION" ] || { echo "::error::empty version after snapshot strip"; exit 1; }
+        [ -n "$(printenv GITEA_HOST)" ] || { echo "::error::GITEA_HOST secret missing"; exit 1; }
+        if [ -n "$(printenv GITEA_PUSH_TOKEN)" ]; then
+          REMOTE="http://oauth2:$(printenv GITEA_PUSH_TOKEN)@$(printenv GITEA_HOST)/$CI_REPO.git"
+        elif [ -n "$(printenv CI_NETRC_USERNAME)" ] && [ -n "$(printenv CI_NETRC_PASSWORD)" ]; then
+          REMOTE="http://$(printenv CI_NETRC_USERNAME):$(printenv CI_NETRC_PASSWORD)@$(printenv GITEA_HOST)/$CI_REPO.git"
+        else
+          echo "::error::no push credential (set repo secret GITEA_PUSH_TOKEN)"; exit 1
+        fi
+        if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/v$VERSION" >/dev/null 2>&1; then
+          echo "tag v$VERSION already on origin — nothing to do"
+          exit 0
+        fi
+        export GIT_TERMINAL_PROMPT=0
+        git config user.name  "ci-release-bot"
+        git config user.email "ci@chorux"
+        git tag -a "v$VERSION" HEAD -m "release: v$VERSION"
+        git push "$REMOTE" "v$VERSION"
+        echo "pushed tag v$VERSION"
+
+  ear-build:
+    image: rust:1
+    when:
+      - event: push
+        branch: main
+    commands:
+      - |
+        set -euo pipefail
+        mkdir -p .ci
+        # the WHOLE body tees: any failure (cargo, cp, smoke) lands in the
+        # log — the artifact was blind to everything after cargo (measured
+        # 2026-10-29: three pipelines failed on the cp, the log read green)
+        {
+          timeout 900 cargo build --release --manifest-path ear/Cargo.toml
+          timeout 600 cargo test --release --manifest-path ear/Cargo.toml
+          # the crate is chorux-ear; the asset name is ear (cargo emits the crate name)
+          cp ear/target/release/chorux-ear .ci/ear
+          set +e
+          SMOKE=$(.ci/ear 2>&1); RC=$?
+          set -e
+          [ "$RC" -eq 2 ] || { echo "::error::smoke failed: rc=$RC (want the usage die, rc 2)"; exit 1; }
+          echo "$SMOKE" | grep -q 'usage: chorux-ear' || { echo "::error::smoke failed: no usage banner in output"; exit 1; }
+          echo "smoke green: usage banner present, rc 2"
+        } 2>&1 | tee .ci/ear-build.log
+
+  ear-build-musl:
+    image: rust:1
+    when:
+      - event: push
+        branch: main
+    commands:
+      - |
+        set -euo pipefail
+        # same image as ear-build (proven pullable): musl arrives as a target,
+        # not a second base image
+        apt-get update -qq && apt-get install -y -qq musl musl-tools >/dev/null
+        rustup target add x86_64-unknown-linux-musl
+        mkdir -p .ci
+        export CC_x86_64_unknown_linux_musl=musl-gcc
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+        {
+          timeout 1200 cargo build --release --target x86_64-unknown-linux-musl --manifest-path ear/Cargo.toml
+          cp ear/target/x86_64-unknown-linux-musl/release/chorux-ear .ci/ear-musl
+          set +e
+          SMOKE=$(.ci/ear-musl 2>&1); RC=$?
+          set -e
+          [ "$RC" -eq 2 ] || { echo "::error::musl smoke failed: rc=$RC (want the usage die, rc 2)"; exit 1; }
+          echo "$SMOKE" | grep -q 'usage: chorux-ear' || { echo "::error::musl smoke failed: no usage banner in output"; exit 1; }
+          echo "smoke green: usage banner present, rc 2 (static musl)"
+        } 2>&1 | tee .ci/ear-musl-build.log
+
+  ear-release-asset:
+    image: alpine:3.20
+    when:
+      - event: push
+        branch: main
+    environment:
+      GITEA_HOST:
+        from_secret: GITEA_HOST
+      GITEA_PUSH_TOKEN:
+        from_secret: GITEA_PUSH_TOKEN
+    commands:
+      - |
+        # Idempotent like tag-release: attach the ear binary to the release
+        # tag when new; skip quietly when the tag or the asset already exists.
+        set -euo pipefail
+        apk add --no-cache curl jq >/dev/null
+        VERSION=$(grep -E '^version = "' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        [ -n "$VERSION" ] || { echo "::error::could not parse version from build.gradle.kts"; exit 1; }
+        VERSION=$(echo "$VERSION" | sed 's/-SNAPSHOT$//')
+        [ -n "$(printenv GITEA_HOST)" ] || { echo "::error::GITEA_HOST secret missing"; exit 1; }
+        [ -n "$(printenv GITEA_PUSH_TOKEN)" ] || { echo "::error::GITEA_PUSH_TOKEN secret missing"; exit 1; }
+        [ -f .ci/ear ] || { echo "::error::ear binary missing from workspace (ear-build did not run)"; exit 1; }
+        RELEASE=$(curl -sf --max-time 30 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+             "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/tags/v$VERSION") \
+          || { echo "tag v$VERSION has no release object — creating it (gitea never auto-creates from tags)"; \
+               curl -sf --max-time 30 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+                 -H 'Content-Type: application/json' \
+                 -d "{\"tag_name\":\"v$VERSION\",\"name\":\"v$VERSION\",\"draft\":false,\"prerelease\":false}" \
+                 "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases" | jq -r '.id' > .ci/release-id \
+               || { echo "::error::release creation failed (tag missing or token scope)"; exit 1; }; }
+        if [ -f .ci/release-id ]; then ID=$(cat .ci/release-id); else ID=$(echo "$RELEASE" | jq -r '.id'); fi
+        if echo "$RELEASE" | jq -e '.assets[]? | select(.name == "ear")' >/dev/null; then
+          echo "asset ear already on v$VERSION (release id $ID) — nothing to do"
+        else
+          curl -sf --max-time 120 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+               -F "attachment=@.ci/ear" \
+               "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/$ID/assets?name=ear"
+          echo "attached ear to release v$VERSION (release id $ID)"
+        fi
+        if echo "$RELEASE" | jq -e '.assets[]? | select(.name == "ear-musl")' >/dev/null; then
+          echo "asset ear-musl already on v$VERSION (release id $ID) — nothing to do"
+        elif [ -f .ci/ear-musl ]; then
+          curl -sf --max-time 120 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+               -F "attachment=@.ci/ear-musl" \
+               "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/$ID/assets?name=ear-musl"
+          echo "attached ear-musl to release v$VERSION (release id $ID)"
+        else
+          echo "::error::ear-musl binary missing from workspace (ear-build-musl did not run)"
+          exit 1
+        fi
+
+  security-scan:
+    image: alpine:3.20
+    when:
+      - event: [push, pull_request]
+    commands:
+      - |
+        set -euo pipefail
+        mkdir -p .ci
+        {
+          FAIL=0
+          while IFS= read -r P; do
+            [ -n "$P" ] || continue
+            # the pattern list itself lives in this file - excluded from its own
+            # scan (hand-reviewed, small); cards/ is internal board state that
+            # never reaches the public tree (the export strips it via temp
+            # index and the filename/content guards verify) — scanning it here
+            # would red every push on its sanctioned internal references;
+            # every other file stays in scope
+            if grep -rInE -e "$P" --exclude-dir=build --exclude-dir=.git --exclude-dir=target --exclude-dir=cards --exclude='*.lock' --exclude='.woodpecker.yml' . > /tmp/scan.out 2>/dev/null; then
+              echo "::error::security-scan hit pattern: $P"
+              cut -c1-60 /tmp/scan.out | head -5
+              FAIL=1
+            fi
+          done <<'PATTERNS'
+        AKIA[0-9A-Z]{16}
+        -----BEGIN RSA PRIVATE KEY
+        -----BEGIN PRIVATE KEY
+        -----BEGIN OPENSSH PRIVATE KEY
+        xox[baprs]-
+        ghp_[A-Za-z0-9]{36}
+        sk-[A-Za-z0-9]{20}
+        Bearer eyJ[A-Za-z0-9_-]{20,}
+        192\.168\.[0-9]+
+        172\.1[6-9]\.[0-9]+
+        172\.2[0-9]\.[0-9]+
+        172\.3[01]\.[0-9]+
+        10\.[0-9]+\.[0-9]+\.
+        coining\.it
+        brockenhurst
+        onticfabric
+        swarm\.local
+        whisper-watch
+        /home/barry
+        Card:[[:space:]]*`?[0-9a-f]{8}-[0-9a-f]{4}
+        PATTERNS
+          if [ "$FAIL" -eq 0 ]; then echo "security-scan clean: no secret-shaped or private-address literals"; fi
+          exit $FAIL
+        } 2>&1 | tee .ci/security-scan.log
+
+  ci-failure-report:
+    image: alpine:3.20
+    when:
+      - event: push
+        branch: main
+        status: failure
+    environment:
+      GITEA_HOST:
+        from_secret: GITEA_HOST
+      GITEA_PUSH_TOKEN:
+        from_secret: GITEA_PUSH_TOKEN
+    commands:
+      - |
+        # Failure visibility on the forge: attach the failing ear-build log
+        # to the release as an asset, so the compile error is readable without
+        # CI UI access. Uses only the secrets the pipeline already has.
+        set -euo pipefail
+        apk add --no-cache curl jq >/dev/null
+        VERSION=$(grep -E '^version = "' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        VERSION=$(echo "$VERSION" | sed 's/-SNAPSHOT$//')
+        [ -n "$VERSION" ] || { echo "::error::could not parse version from build.gradle.kts"; exit 0; }
+        [ -n "$(printenv GITEA_HOST)" ] || { echo "::error::GITEA_HOST secret missing"; exit 0; }
+        [ -n "$(printenv GITEA_PUSH_TOKEN)" ] || { echo "::error::GITEA_PUSH_TOKEN secret missing"; exit 0; }
+        LOOKUP() { curl -sf --max-time 30 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/tags/v$VERSION"; }
+        RELEASE=$(LOOKUP) || {
+          curl -sf --max-time 30 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+               -H 'Content-Type: application/json' \
+               -d "{\"tag_name\":\"v$VERSION\",\"name\":\"v$VERSION\",\"draft\":false,\"prerelease\":false}" \
+               "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases" >/dev/null 2>&1 || true
+          RELEASE=$(LOOKUP) || { echo "::error::cannot find or create release v$VERSION"; exit 0; }
+        }
+        ID=$(echo "$RELEASE" | jq -r '.id')
+        [ -n "$ID" ] && [ "$ID" != "null" ] || { echo "::error::no release id for v$VERSION"; exit 0; }
+        for LOG in verify.log ear-build.log ear-musl-build.log security-scan.log; do
+          [ -f .ci/$LOG ] || { echo "no $LOG captured — nothing to attach"; continue; }
+          # NOTE: no dollar-brace parameter expansion anywhere in this file —
+          # the woodpecker template pre-expands those sequences to nothing
+          ASSET=$(printf '%s' "$LOG" | sed 's/\.log$//')-failure.log
+          if echo "$RELEASE" | jq -e --arg a "$ASSET" '.assets[]? | select(.name == $a)' >/dev/null 2>&1; then
+            echo "$ASSET already attached to v$VERSION — nothing to do"
+          else
+            tail -c 8000 .ci/$LOG > .ci/$ASSET
+            curl -sf --max-time 60 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+                 -F "attachment=@.ci/$ASSET" \
+                 "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/$ID/assets?name=$ASSET" >/dev/null
+            echo "attached $ASSET to release v$VERSION (release id $ID)"
+          fi
+        done
+
+  ci-report:
+    image: alpine:3.20
+    when:
+      - event: push
+        branch: main
+        status: failure
+    commands:
+      - |
+        # The CI's own channel (session is identity): on failure the
+        # pipeline joins the chorux room as handle `ci` and speaks the
+        # failing build's tail, where the standing daemon's stream
+        # delivers it in seconds.
+        #
+        # ARMED BY A REPO SECRET: woodpecker 3.19 hard-fails the whole
+        # DAG when a declared from_secret is absent, so the declaration
+        # lives OUT of this file until the secret exists. To arm: set the
+        # repo secret CHORUX_DAEMON_URL to the standing daemon's MCP
+        # endpoint URL, then re-add under this step:
+        #   environment:
+        #     CHORUX_DAEMON_URL:
+        #       from_secret: CHORUX_DAEMON_URL
+        # Until then this step self-skips at runtime (the pipeline runs).
+        set -euo pipefail
+        apk add --no-cache curl jq >/dev/null
+        if [ -z "$(printenv CHORUX_DAEMON_URL)" ]; then
+          echo "::error::CHORUX_DAEMON_URL secret missing (repo setting: the standing daemon's http://<host>:8080/mcp) — room report skipped"
+          exit 0
+        fi
+        D="$(printenv CHORUX_DAEMON_URL)"
+        SID=$(curl -sf --max-time 15 -D - -o /dev/null -X POST "$D" \
+             -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"0.1.0"}}}' \
+             | awk 'tolower($1)=="mcp-session-id:"{gsub("\r","");print $2}')
+        [ -n "$SID" ] || { echo "::error::no MCP session from the daemon — room report skipped"; exit 0; }
+        for REQ in \
+          '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+          '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"join","arguments":{"group":"chorux","handle":"ci"}}}'; do
+          curl -sf --max-time 15 -X POST "$D" -H "Mcp-Session-Id: $SID" \
+               -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+               -d "$REQ" >/dev/null
+        done
+        TAIL=$(tail -c 1200 .ci/ear-build.log 2>/dev/null || echo "no ear-build log captured")
+        printf '%s' "$TAIL" | jq -Rs --arg v "$CI_COMMIT_SHA" \
+             '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"say","arguments":{"group":"chorux","handle":"ci","text":("ci: ear-build failed at " + $v + " — cargo tail: " + .)}}}' > /tmp/ci-say.json
+        curl -sf --max-time 15 -X POST "$D" -H "Mcp-Session-Id: $SID" \
+             -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+             -d @/tmp/ci-say.json >/dev/null
+        echo "ci-report: failure tail spoken into the room (handle ci)"
