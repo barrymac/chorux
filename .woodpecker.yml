@@ -1,0 +1,413 @@
+# .woodpecker.yml — chorux CI
+#
+# This repo is PUBLIC: no internal hostnames, IPs, or credentials in this
+# file — every internal value arrives through repo secrets (absent on PRs by
+# woodpecker policy) or CI_ built-ins. Missing values fail loud with the
+# secret named; nothing defaults silently.
+#
+# Woodpecker laws (from fleet porting history):
+# - One shell per `commands:` item: multi-command units are a single `|`
+#   block scalar.
+# - $VAR for shell expansion; never a dollar-brace sequence anywhere in
+#   this file, not even in comments — the template engine pre-expands them.
+# - Secrets are NOT auto-injected: each consuming step declares them under
+#   `environment:` with from_secret.
+# - Steps run in containers over a shared workspace volume; cross-step state
+#   travels as files under .ci/.
+#
+# Secrets consumed (repo settings):
+#   REGISTRY_HOST     — registry hostname images are pushed to
+#   REGISTRY_LAN_IP   — optional /etc/hosts pin when cluster DNS can't
+#                       resolve REGISTRY_HOST
+#   GITEA_HOST        — forge host used for the release-tag push remote
+#   GITEA_PUSH_TOKEN  — token for pushing release tags (CI_NETRC_* fallback)
+
+when:
+  - event: [push, pull_request]
+
+steps:
+  # ── DAG, not serial woodpecker default ─────────────────────────────────
+  # depends_on turns the pipeline into a DAG: anything not listed as a
+  # dependency runs as soon as its own deps finish. The four rust builds
+  # (ear x native/musl, bridge x native/musl) dominate wall-clock serially
+  # (~35min total); they are independent compilations and now run at once.
+  # Gate preservation: image pushes and the git tag still wait for verify;
+  # each musl build gets its own CARGO_TARGET_DIR because native and musl
+  # builds of the same crate would otherwise serialize on the target lock.
+  # Release assets attach in ONE step (release-assets): a single release
+  # lookup/create + per-asset idempotent attach — the pre-DAG two-step
+  # shape raced on concurrent release creates and needed a sequencing hack.
+  verify:
+    image: gradle:9-jdk21
+    commands:
+      - |
+        mkdir -p .ci
+        ./gradlew --no-daemon test > .ci/verify.log 2>&1
+        RC=$?
+        tail -c 4000 .ci/verify.log
+        exit $RC
+
+  image-build-push:
+    image: gcr.io/kaniko-project/executor:v1.23.2-debug
+    depends_on: [verify]
+    when:
+      - event: push
+        branch: main
+        path:
+          # content-only pushes (docs, cards, markdown) skip the heavy
+          # legs; code, version bumps and CI changes still run everything
+          exclude: ["docs/**", "cards/**", "**/*.md"]
+    environment:
+      REGISTRY_HOST:
+        from_secret: REGISTRY_HOST
+      REGISTRY_LAN_IP:
+        from_secret: REGISTRY_LAN_IP
+    commands:
+      - |
+        set -euo pipefail
+        [ -n "$(printenv REGISTRY_HOST)" ] || { echo "::error::REGISTRY_HOST secret missing"; exit 1; }
+        if ! getent hosts "$(printenv REGISTRY_HOST)" >/dev/null 2>&1; then
+          [ -n "$(printenv REGISTRY_LAN_IP)" ] || { echo "::error::REGISTRY_HOST unresolvable and no REGISTRY_LAN_IP pin secret"; exit 1; }
+          echo "$(printenv REGISTRY_LAN_IP) $(printenv REGISTRY_HOST)" >> /etc/hosts
+        fi
+        VERSION=$(grep -E '^version = "' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        [ -n "$VERSION" ] || { echo "::error::could not parse version from build.gradle.kts"; exit 1; }
+        VERSION=$(echo "$VERSION" | sed 's/-SNAPSHOT$//')
+        echo "$VERSION" > .ci/version 2>/dev/null || { mkdir -p .ci && echo "$VERSION" > .ci/version; }
+        [ -n "$VERSION" ] || { echo "::error::empty version after snapshot strip"; exit 1; }
+        mkdir -p /kaniko/.docker
+        printf '{"auths":{}}' > /kaniko/.docker/config.json
+        /kaniko/executor \
+          --context "dir://$CI_WORKSPACE" \
+          --dockerfile Dockerfile \
+          --destination "$(printenv REGISTRY_HOST)/chorux:$VERSION" \
+          --destination "$(printenv REGISTRY_HOST)/chorux:$CI_COMMIT_SHA" \
+          --build-arg "GIT_SHA=$CI_COMMIT_SHA" \
+          --cache=true \
+          --cache-repo "$(printenv REGISTRY_HOST)/chorux/cache" \
+          --cleanup
+        echo "pushed chorux:$VERSION and chorux:$CI_COMMIT_SHA"
+
+  tag-release:
+    image: alpine/git:2.45.2
+    depends_on: [verify]
+    when:
+      - event: push
+        branch: main
+        path:
+          # content-only pushes (docs, cards, markdown) skip the heavy
+          # legs; code, version bumps and CI changes still run everything
+          exclude: ["docs/**", "cards/**", "**/*.md"]
+    environment:
+      GITEA_HOST:
+        from_secret: GITEA_HOST
+      GITEA_PUSH_TOKEN:
+        from_secret: GITEA_PUSH_TOKEN
+    commands:
+      - |
+        # Honest idempotency: tag releases re-run safely; push only when the
+        # tag is new. Tag events are filtered out at the top-level `when`, so
+        # this push never re-triggers this pipeline.
+        set -euo pipefail
+        VERSION=$(grep -E '^version = "' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        [ -n "$VERSION" ] || { echo "::error::could not parse version from build.gradle.kts"; exit 1; }
+        VERSION=$(echo "$VERSION" | sed 's/-SNAPSHOT$//')
+        [ -n "$VERSION" ] || { echo "::error::empty version after snapshot strip"; exit 1; }
+        [ -n "$(printenv GITEA_HOST)" ] || { echo "::error::GITEA_HOST secret missing"; exit 1; }
+        if [ -n "$(printenv GITEA_PUSH_TOKEN)" ]; then
+          REMOTE="http://oauth2:$(printenv GITEA_PUSH_TOKEN)@$(printenv GITEA_HOST)/$CI_REPO.git"
+        elif [ -n "$(printenv CI_NETRC_USERNAME)" ] && [ -n "$(printenv CI_NETRC_PASSWORD)" ]; then
+          REMOTE="http://$(printenv CI_NETRC_USERNAME):$(printenv CI_NETRC_PASSWORD)@$(printenv GITEA_HOST)/$CI_REPO.git"
+        else
+          echo "::error::no push credential (set repo secret GITEA_PUSH_TOKEN)"; exit 1
+        fi
+        if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/v$VERSION" >/dev/null 2>&1; then
+          echo "tag v$VERSION already on origin — nothing to do"
+          exit 0
+        fi
+        export GIT_TERMINAL_PROMPT=0
+        git config user.name  "ci-release-bot"
+        git config user.email "ci@chorux"
+        git tag -a "v$VERSION" HEAD -m "release: v$VERSION"
+        git push "$REMOTE" "v$VERSION"
+        echo "pushed tag v$VERSION"
+
+  ear-build:
+    image: rust:1
+    when:
+      - event: push
+        branch: main
+        path:
+          # content-only pushes (docs, cards, markdown) skip the heavy
+          # legs; code, version bumps and CI changes still run everything
+          exclude: ["docs/**", "cards/**", "**/*.md"]
+    commands:
+      # body lives in ci/rust-build.sh — one shared build script, four thin
+      # steps (why not a real matrix: WP matrix forks WORKFLOWS, and
+      # release-assets / failure reporters depend on these steps BY NAME)
+      - bash ci/rust-build.sh ear native
+
+  ear-build-musl:
+    image: rust:1
+    when:
+      - event: push
+        branch: main
+        path:
+          # content-only pushes (docs, cards, markdown) skip the heavy
+          # legs; code, version bumps and CI changes still run everything
+          exclude: ["docs/**", "cards/**", "**/*.md"]
+    commands:
+      # body lives in ci/rust-build.sh — one shared build script, four thin
+      # steps (why not a real matrix: WP matrix forks WORKFLOWS, and
+      # release-assets / failure reporters depend on these steps BY NAME)
+      - bash ci/rust-build.sh ear musl
+
+  bridge-build:
+    image: rust:1
+    when:
+      - event: push
+        branch: main
+        path:
+          exclude: ["docs/**", "cards/**", "**/*.md"]
+    commands:
+      # body lives in ci/rust-build.sh — one shared build script, four thin
+      # steps (why not a real matrix: WP matrix forks WORKFLOWS, and
+      # release-assets / failure reporters depend on these steps BY NAME)
+      - bash ci/rust-build.sh bridge native
+
+  bridge-build-musl:
+    image: rust:1
+    when:
+      - event: push
+        branch: main
+        path:
+          exclude: ["docs/**", "cards/**", "**/*.md"]
+    commands:
+      # body lives in ci/rust-build.sh — one shared build script, four thin
+      # steps (why not a real matrix: WP matrix forks WORKFLOWS, and
+      # release-assets / failure reporters depend on these steps BY NAME)
+      - bash ci/rust-build.sh bridge musl
+
+  release-assets:
+    image: alpine:3.20
+    depends_on: [ear-build, ear-build-musl, bridge-build, bridge-build-musl]
+    when:
+      - event: push
+        branch: main
+        path:
+          exclude: ["docs/**", "cards/**", "**/*.md"]
+    environment:
+      GITEA_HOST:
+        from_secret: GITEA_HOST
+      GITEA_PUSH_TOKEN:
+        from_secret: GITEA_PUSH_TOKEN
+    commands:
+      - |
+        # ONE step for every release binary: a single release-object
+        # lookup/create, then a per-asset idempotent attach loop over the
+        # known set. Replaces the ear/bridge twin steps: two concurrent
+        # release creates raced on the gitea API (dup releases, split asset
+        # ids) and the pair needed a sequencing hack. Idempotent like
+        # tag-release: existing assets are skipped; logs are the mutable
+        # kind (ci-failure-report replaces), binaries the immutable kind.
+        # Adding a daemon later = one name in ASSETS + one cp in its build.
+        set -euo pipefail
+        apk add --no-cache curl jq >/dev/null
+        VERSION=$(grep -E '^version = "' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        [ -n "$VERSION" ] || { echo "::error::could not parse version from build.gradle.kts"; exit 1; }
+        VERSION=$(echo "$VERSION" | sed 's/-SNAPSHOT$//')
+        [ -n "$VERSION" ] || { echo "::error::empty version after snapshot strip"; exit 1; }
+        [ -n "$(printenv GITEA_HOST)" ] || { echo "::error::GITEA_HOST secret missing"; exit 1; }
+        [ -n "$(printenv GITEA_PUSH_TOKEN)" ] || { echo "::error::GITEA_PUSH_TOKEN secret missing"; exit 1; }
+        RELEASE=$(curl -sf --max-time 30 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+             "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/tags/v$VERSION") \
+          || { echo "tag v$VERSION has no release object — creating it (gitea never auto-creates from tags)"; \
+               curl -sf --max-time 30 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+                 -H 'Content-Type: application/json' \
+                 -d "{\"tag_name\":\"v$VERSION\",\"name\":\"v$VERSION\",\"draft\":false,\"prerelease\":false}" \
+                 "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases" >/dev/null \
+               || { echo "::error::release creation failed (tag missing or token scope)"; exit 1; }
+               RELEASE=$(curl -sf --max-time 30 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+                    "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/tags/v$VERSION") \
+                 || { echo "::error::self-check: just-created release v$VERSION not readable"; exit 1; }; }
+        ID=$(echo "$RELEASE" | jq -r '.id')
+        [ -n "$ID" ] && [ "$ID" != "null" ] || { echo "::error::no release id for v$VERSION"; exit 1; }
+        for ASSET in ear ear-musl bridge bridge-musl; do
+          [ -f .ci/$ASSET ] || { echo "::error::$ASSET binary missing from workspace (its build step did not run)"; exit 1; }
+          if echo "$RELEASE" | jq -e --arg a "$ASSET" '.assets[]? | select(.name == $a)' >/dev/null; then
+            echo "asset $ASSET already on v$VERSION (release id $ID) — nothing to do"
+          else
+            curl -sf --max-time 120 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+                 -F "attachment=@.ci/$ASSET" \
+                 "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/$ID/assets?name=$ASSET" >/dev/null
+            echo "attached $ASSET to release v$VERSION (release id $ID)"
+          fi
+        done
+
+  security-scan:
+    image: alpine:3.20
+    when:
+      - event: [push, pull_request]
+    commands:
+      - |
+        set -euo pipefail
+        mkdir -p .ci
+        {
+          FAIL=0
+          while IFS= read -r P; do
+            [ -n "$P" ] || continue
+            # the pattern list itself lives in this file - excluded from its own
+            # scan (hand-reviewed, small); cards/ is internal board state that
+            # never reaches the public tree (the export strips it via temp
+            # index and the filename/content guards verify) — scanning it here
+            # would red every push on its sanctioned internal references;
+            # every other file stays in scope
+            if grep -rInE -e "$P" --exclude-dir=build --exclude-dir=.git --exclude-dir=target --exclude-dir=cards --exclude='*.lock' --exclude='.woodpecker.yml' . > /tmp/scan.out 2>/dev/null; then
+              echo "::error::security-scan hit pattern: $P"
+              cut -c1-60 /tmp/scan.out | head -5
+              FAIL=1
+            fi
+          done <<'PATTERNS'
+        AKIA[0-9A-Z]{16}
+        -----BEGIN RSA PRIVATE KEY
+        -----BEGIN PRIVATE KEY
+        -----BEGIN OPENSSH PRIVATE KEY
+        xox[baprs]-
+        ghp_[A-Za-z0-9]{36}
+        sk-[A-Za-z0-9]{20}
+        Bearer eyJ[A-Za-z0-9_-]{20,}
+        192\.168\.[0-9]+
+        172\.1[6-9]\.[0-9]+
+        172\.2[0-9]\.[0-9]+
+        172\.3[01]\.[0-9]+
+        10\.[0-9]+\.[0-9]+\.
+        coining\.it
+        brockenhurst
+        onticfabric
+        swarm\.local
+        whisper-watch
+        /home/barry
+        Card:[[:space:]]*`?[0-9a-f]{8}-[0-9a-f]{4}
+        PATTERNS
+          if [ "$FAIL" -eq 0 ]; then echo "security-scan clean: no secret-shaped or private-address literals"; fi
+          exit $FAIL
+        } 2>&1 | tee .ci/security-scan.log
+
+  ci-failure-report:
+    image: alpine:3.20
+    # last step of the DAG: collects whatever log files exist on failure
+    depends_on: [verify, image-build-push, security-scan, ear-build, ear-build-musl, bridge-build, bridge-build-musl]
+    when:
+      - event: push
+        branch: main
+        status: failure
+        path:
+          # mirrored exclusion with the heavy legs: a docs-only push skips the
+          # builds this step reports on; verify/scan failures on that path
+          # show in the CI UI but get no release-asset log mirror
+          exclude: ["docs/**", "cards/**", "**/*.md"]
+    environment:
+      GITEA_HOST:
+        from_secret: GITEA_HOST
+      GITEA_PUSH_TOKEN:
+        from_secret: GITEA_PUSH_TOKEN
+    commands:
+      - |
+        # Failure visibility on the forge: attach the failing ear-build log
+        # to the release as an asset, so the compile error is readable without
+        # CI UI access. Uses only the secrets the pipeline already has.
+        set -euo pipefail
+        apk add --no-cache curl jq >/dev/null
+        VERSION=$(grep -E '^version = "' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        VERSION=$(echo "$VERSION" | sed 's/-SNAPSHOT$//')
+        [ -n "$VERSION" ] || { echo "::error::could not parse version from build.gradle.kts"; exit 0; }
+        [ -n "$(printenv GITEA_HOST)" ] || { echo "::error::GITEA_HOST secret missing"; exit 0; }
+        [ -n "$(printenv GITEA_PUSH_TOKEN)" ] || { echo "::error::GITEA_PUSH_TOKEN secret missing"; exit 0; }
+        LOOKUP() { curl -sf --max-time 30 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/tags/v$VERSION"; }
+        RELEASE=$(LOOKUP) || {
+          curl -sf --max-time 30 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+               -H 'Content-Type: application/json' \
+               -d "{\"tag_name\":\"v$VERSION\",\"name\":\"v$VERSION\",\"draft\":false,\"prerelease\":false}" \
+               "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases" >/dev/null 2>&1 || true
+          RELEASE=$(LOOKUP) || { echo "::error::cannot find or create release v$VERSION"; exit 0; }
+        }
+        ID=$(echo "$RELEASE" | jq -r '.id')
+        [ -n "$ID" ] && [ "$ID" != "null" ] || { echo "::error::no release id for v$VERSION"; exit 0; }
+        for LOGPATH in .ci/*.log; do
+          # glob, not a named list — the bridge failure (2026-10-31, #83)
+          # proved a hardcoded roster silently starves new daemons of their
+          # failure mirror; every *-build.log gets attached, whoever wrote it
+          [ -f "$LOGPATH" ] || continue
+          LOG=$(basename "$LOGPATH")
+          # NOTE: no dollar-brace parameter expansion anywhere in this file —
+          # the woodpecker template pre-expands those sequences to nothing
+          ASSET=$(printf '%s' "$LOG" | sed 's/\.log$//')-failure.log
+          EXISTING=$(echo "$RELEASE" | jq -r --arg a "$ASSET" '.assets[]? | select(.name == $a) | .id')
+          if [ -n "$EXISTING" ]; then
+            # REPLACE, never skip: pipeline #85 (2026-10-31) proved a stale
+            # same-named log from an earlier failure SHADOWS the current one —
+            # the reader gets yesterday's errors. Logs are diagnostic, unlike
+            # the immutable binaries (which ear-release-asset still skips).
+            echo "$ASSET already on v$VERSION (asset id $EXISTING) — replacing with the current failure"
+            curl -sf --max-time 30 -X DELETE -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+                 "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/$ID/assets/$EXISTING"
+          fi
+          tail -c 8000 "$LOGPATH" > .ci/$ASSET
+          curl -sf --max-time 60 -H "Authorization: token $(printenv GITEA_PUSH_TOKEN)" \
+               -F "attachment=@.ci/$ASSET" \
+               "http://$(printenv GITEA_HOST)/api/v1/repos/$CI_REPO/releases/$ID/assets?name=$ASSET" >/dev/null
+          echo "attached $ASSET to release v$VERSION (release id $ID)"
+        done
+
+  ci-report:
+    image: alpine:3.20
+    # end of the DAG like ci-failure-report — an end-evaluated failure gate
+    depends_on: [verify, image-build-push, security-scan, ear-build, ear-build-musl, bridge-build, bridge-build-musl]
+    when:
+      - event: push
+        branch: main
+        status: failure
+        path:
+          exclude: ["docs/**", "cards/**", "**/*.md"]
+    commands:
+      - |
+        # The CI's own channel (session is identity): on failure the
+        # pipeline joins the chorux room as handle `ci` and speaks the
+        # failing build's tail, where the standing daemon's stream
+        # delivers it in seconds.
+        #
+        # ARMED BY A REPO SECRET: woodpecker 3.19 hard-fails the whole
+        # DAG when a declared from_secret is absent, so the declaration
+        # lives OUT of this file until the secret exists. To arm: set the
+        # repo secret CHORUX_DAEMON_URL to the standing daemon's MCP
+        # endpoint URL, then re-add under this step:
+        #   environment:
+        #     CHORUX_DAEMON_URL:
+        #       from_secret: CHORUX_DAEMON_URL
+        # Until then this step self-skips at runtime (the pipeline runs).
+        set -euo pipefail
+        apk add --no-cache curl jq >/dev/null
+        if [ -z "$(printenv CHORUX_DAEMON_URL)" ]; then
+          echo "::error::CHORUX_DAEMON_URL secret missing (repo setting: the standing daemon's http://<host>:8080/mcp) — room report skipped"
+          exit 0
+        fi
+        D="$(printenv CHORUX_DAEMON_URL)"
+        SID=$(curl -sf --max-time 15 -D - -o /dev/null -X POST "$D" \
+             -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"0.1.0"}}}' \
+             | awk 'tolower($1)=="mcp-session-id:"{gsub("\r","");print $2}')
+        [ -n "$SID" ] || { echo "::error::no MCP session from the daemon — room report skipped"; exit 0; }
+        for REQ in \
+          '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+          '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"join","arguments":{"group":"chorux","handle":"ci"}}}'; do
+          curl -sf --max-time 15 -X POST "$D" -H "Mcp-Session-Id: $SID" \
+               -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+               -d "$REQ" >/dev/null
+        done
+        TAIL=$(tail -c 1200 .ci/ear-build.log 2>/dev/null || echo "no ear-build log captured")
+        printf '%s' "$TAIL" | jq -Rs --arg v "$CI_COMMIT_SHA" \
+             '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"say","arguments":{"group":"chorux","handle":"ci","text":("ci: ear-build failed at " + $v + " — cargo tail: " + .)}}}' > /tmp/ci-say.json
+        curl -sf --max-time 15 -X POST "$D" -H "Mcp-Session-Id: $SID" \
+             -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+             -d @/tmp/ci-say.json >/dev/null
+        echo "ci-report: failure tail spoken into the room (handle ci)"

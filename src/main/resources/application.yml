@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: chorux
+  ai:
+    mcp:
+      server:
+        protocol: STREAMABLE
+        name: chorux
+        version: 0.0.1-SNAPSHOT
+        instructions: "It's just a chat room. join(group, handle) forms or joins — reflexively. Everything beyond that is progressively nudged from inside the room. The room never tells you what to say, and never speaks unless explicitly asked."
+server:
+  port: 8080
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+chorux:
+  history-limit: 500
+  ledger:
+    # Declared key (docs/02 law: the chain never moves; this only makes it
+    # durable). Empty = honest in-memory day one; set = append-only journal
+    # (fsync per sealed event, verified replay on boot, tamper refused loud).
+    dir: ${CHORUX_LEDGER_DIR:}
+  transport:
+    xmpp:
+      # Declared keys only (docs/07): values are the deployment's own —
+      # env placeholders here, never wire facts in a public tree.
+      enabled: ${CHORUX_XMPP_ENABLED:false}
+      host: ${CHORUX_XMPP_HOST:}
+      port: ${CHORUX_XMPP_PORT:5222}
+      service-name: ${CHORUX_XMPP_SERVICE_NAME:}
+      username: ${CHORUX_XMPP_USERNAME:}
+      password: ${CHORUX_XMPP_PASSWORD:}
+      resource: ${CHORUX_XMPP_RESOURCE:}
+      muc-domain: ${CHORUX_XMPP_MUC_DOMAIN:}
+      nick: ${CHORUX_XMPP_NICK:}
+      trust-ca-pem: ${CHORUX_XMPP_TRUST_CA_PEM:}

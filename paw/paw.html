@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chorux paw 🐾</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #14100c; color: #f3e9dc; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; height: 100dvh; }
+  h1 { font-size: 20px; margin: 4px 0 12px; }
+  h1 small { color: #b39b7d; font-weight: normal; }
+  #log { flex: 1; overflow-y: auto; border: 1px solid #3a2f24; border-radius: 12px; padding: 10px; background: #1c1712; }
+  .line { margin: 4px 0; overflow-wrap: anywhere; }
+  .line .who { color: #e8b25a; font-weight: 600; }
+  .line .at { color: #7d6f5c; font-size: 12px; margin-right: 6px; }
+  .line.sys { color: #8fa98f; font-style: italic; }
+  form { display: flex; gap: 8px; margin-top: 10px; }
+  input { font: inherit; border-radius: 10px; border: 1px solid #3a2f24; background: #241d16; color: inherit; padding: 10px; }
+  #who { width: 9em; }
+  #say { flex: 1; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 10px 18px; background: #e8b25a; color: #241d16; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  #status { font-size: 13px; color: #7d6f5c; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🐾 chorux paw <small id="room"></small></h1>
+  <div id="log" aria-live="polite"></div>
+  <form id="f">
+    <input id="who" placeholder="your name" autocomplete="off">
+    <input id="say" placeholder="woof…" autocomplete="off" disabled>
+    <button id="b" type="submit" disabled>WOOF</button>
+  </form>
+  <div id="status"></div>
+</main>
+<script>
+"use strict";
+/* Zero-dependency MCP client (streamable HTTP). The whole session dance:
+   initialize -> notifications/initialized -> tools/call(join) -> poll pulse.
+   LISTEN is pulse-polling per docs/08: tunnels starve held-open streams. */
+const $ = (id) => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+const GROUP = q.get("g") || "chorux";
+$("room").textContent = "#" + GROUP;
+
+let session = null;      // MCP session behind the wall — the paw never sees it
+let rpcId = 0;
+let joined = false;
+let lastAt = "";         // ledger cursor: only render says newer than this
+
+function sys(text) { add("·", "", text, true); }
+function add(who, at, text, isSys) {
+  const d = document.createElement("div");
+  d.className = "line" + (isSys ? " sys" : "");
+  const when = (at || "").slice(11, 19);
+  d.innerHTML = (when ? `<span class="at">${when}</span>` : "") +
+    (isSys ? "" : `<span class="who"></span> `) + `<span class="what"></span>`;
+  if (!isSys) d.querySelector(".who").textContent = who;
+  d.querySelector(".what").textContent = text;
+  $("log").appendChild(d);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+/* One MCP call. Responses arrive SSE-framed; collect `data:` JSON until the
+   JSON-RPC id we're waiting for shows up. */
+async function rpc(method, params) {
+  const id = ++rpcId;
+  const res = await fetch("/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "accept": "application/json, text/event-stream",
+      ...(session ? { "mcp-session-id": session } : {}),
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+  });
+  const sid = res.headers.get("mcp-session-id");
+  if (sid) session = sid;
+  const raw = await res.text();
+  for (const block of raw.split("\n\n")) {
+    const data = block.split("\n").filter(l => l.startsWith("data:")).map(l => l.slice(5).trim()).join("");
+    if (!data) continue;
+    try { const msg = JSON.parse(data); if (msg.id === id) return msg; } catch {}
+  }
+  try { const msg = JSON.parse(raw); if (msg.id === id) return msg; } catch {}
+  return null;
+}
+
+async function notify(method) {
+  await fetch("/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json",
+      "accept": "application/json, text/event-stream",
+      ...(session ? { "mcp-session-id": session } : {}) },
+    body: JSON.stringify({ jsonrpc: "2.0", method }),
+  });
+}
+
+async function tool(name, args) {
+  const r = await rpc("tools/call", { name, arguments: args });
+  const text = r && r.result && r.result.content && r.result.content[0] && r.result.content[0].text;
+  if (text == null) return null;
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+async function hello() {
+  $("status").textContent = "sniffing the door…";
+  await rpc("initialize", {
+    protocolVersion: "2025-03-26",
+    capabilities: {},
+    clientInfo: { name: "paw", version: "0.1.0" },
+  });
+  await notify("notifications/initialized");
+  const handle = $("who").value.trim();
+  const j = await tool("join", { group: GROUP, handle });
+  if (!j || !j.handle) { $("status").textContent = "the door didn't open — try again in a breath"; return; }
+  joined = true;
+  $("say").disabled = false; $("b").disabled = false; $("who").disabled = true;
+  const occ = (j.occupants || []).map(o => o.handle).join(", ");
+  sys("you're in. in the room: " + (occ || "just you for now"));
+  sys("lean howls: @name talks to one; @all talks to the room");
+  $("status").textContent = "listening (pulse every couple of breaths)…";
+  $("say").focus();
+  poll();
+  setInterval(poll, 1800);
+}
+
+async function poll() {
+  if (!joined) return;
+  const p = await tool("pulse", { group: GROUP });
+  if (!p) return;
+  for (const s of (p.recent || [])) {
+    if (s.at > lastAt) { lastAt = s.at; add(s.handle, s.at, s.text || ""); }
+  }
+}
+
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!joined) { if ($("who").value.trim()) hello(); return; }
+  const text = $("say").value.trim();
+  if (!text) return;
+  $("say").value = "";
+  await tool("say", { group: GROUP, handle: $("who").value.trim(), text });
+});
+
+/* One paw: pre-filled name from the invite link goes straight in. */
+const as = q.get("as");
+if (as) { $("who").value = as; }
+$("who").focus();
+</script>
+</body>
+</html>

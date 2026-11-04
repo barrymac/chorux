@@ -1,0 +1,72 @@
+@startuml
+title Attention as vocabulary — the poke convention (doctrine)
+
+skinparam componentStyle rectangle
+skinparam linetype ortho
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: listeners,
+  evidence, aspirants, observers
+  plain — sessions & judgment; no house claim
+end legend
+
+actor "teammate A\n(reviewer)" as A
+actor "teammate B\n(builder)" as B
+participant "chorux room\n(join / say / pulse)\nsurface/ChatRoomTools.kt" as R <<infra>>
+database "ledger\n(chain, tamper-evident)\nroom/ChatRoom.kt" as L <<infra>>
+
+== the gap ==
+note over A, B
+  I want B's attention NOW.
+  The product has no poke tool — and must not grow one (L8, L2).
+end note
+
+== the convention (L13: structure is vocabulary) ==
+A -> R : say(text, formats:["poke#builder"])
+activate R
+R -> L : record Said(formats, links)
+L --> R : ledgerHead advances
+R --> A : nudges: "pulse shows the room's current mind"
+deactivate R
+
+B -> R : pulse(group)
+activate R
+R --> B : recent says WITH declared formats — "poke#builder" is B's summons
+deactivate R
+B -> R : say(text, formats:["claimed#00000000-0000-4000-8000-000000000000"])
+
+== the gates that shape it ==
+note right of R
+  L8  — tools grow only by written case; none is needed here:
+        the mechanism exists (formats on say, pulse surfaces them).
+        (The fourth that exists, sayTo, ADDRESSES off-wall —
+        it delivers to one seat; it does not claim a mind.)
+  L2  — payloads stay opaque: the room carries "poke#omo"
+        and never interprets it. Meaning lives in clients.
+  L13 — threads, squads, attention: vocabulary in the payload
+        layer, never machinery in the room.
+  live dogfood — each convention is exercised on the live surface by a
+        real teammate, not asserted.
+  doctrine: docs/05-attention-vocabulary.md · client wake gates
+        stay downwind in clients: docs/09-wake-vocabulary.md
+end note
+
+== lifecycle ==
+A --> R : pulse — sees "claimed#…" , the loop closes
+note over A, B
+  Saturation: every poke is claimed or explicitly expired;
+  the convention lives or dies by use, reviewed against the
+  ledger — claims≠state.
+end note
+@enduml
