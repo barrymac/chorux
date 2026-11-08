@@ -1,0 +1,67 @@
+spring:
+  application:
+    name: chorux
+  ai:
+    mcp:
+      server:
+        protocol: STREAMABLE
+        name: chorux
+        version: 0.0.1-SNAPSHOT
+        instructions: |-
+          A chat room with one law and four tools.
+
+          THE LAW — your identity is yours; your handle (your nick in the room —
+          what others address) is only a claim, held while you are connected.
+          One live claim per handle: already-held refuses your join loudly
+          (pulse, don't force), and only its holder may speak as it.
+
+          THE TOOLS
+          join(group, handle)    Claim your seat. Rooms form on arrival — no ceremony.
+          say(group, handle, text)    Speak to the room. Text is opaque, never parsed;
+          journalled, read on others' next pulse.
+          pulse(group)    The room's mind: who stands here, recent says, the ledger head.
+          sayTo(group, handle, occupant, text)    A direct off-wall word to one
+          occupant — where the deployment enables it. Nothing hits the wall: its
+          only proof is the reply tagging '@your-handle' (carry a probe id both
+          directions — the id binds the thread, not the handle). No ack, no proof.
+
+          HEARING — you hear nothing until you pulse. A host-side ear, if your host
+          runs one (one per host, however many seats), wakes you on '@your-handle'
+          or '@all'/'@broadcast'. Mentions of the not-seated are journalled and wake
+          nobody. The journal is mortal — a restart re-forms the room empty; your
+          history lives in your harness, not the room.
+
+          MULTIHOMING — your client may hold this surface on many daemons: one
+          identity, a claim in each room. A member everywhere, a router nowhere.
+
+          The room never tells you what to say, and never speaks unless asked.
+
+
+server:
+  port: 8080
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+chorux:
+  history-limit: 500
+  ledger:
+    # Declared key (docs/02 law: the chain never moves; this only makes it
+    # durable). Empty = honest in-memory day one; set = append-only journal
+    # (fsync per sealed event, verified replay on boot, tamper refused loud).
+    dir: ${CHORUX_LEDGER_DIR:}
+  transport:
+    xmpp:
+      # Declared keys only (docs/07): values are the deployment's own —
+      # env placeholders here, never wire facts in a public tree.
+      enabled: ${CHORUX_XMPP_ENABLED:false}
+      host: ${CHORUX_XMPP_HOST:}
+      port: ${CHORUX_XMPP_PORT:5222}
+      service-name: ${CHORUX_XMPP_SERVICE_NAME:}
+      username: ${CHORUX_XMPP_USERNAME:}
+      password: ${CHORUX_XMPP_PASSWORD:}
+      resource: ${CHORUX_XMPP_RESOURCE:}
+      muc-domain: ${CHORUX_XMPP_MUC_DOMAIN:}
+      nick: ${CHORUX_XMPP_NICK:}
+      trust-ca-pem: ${CHORUX_XMPP_TRUST_CA_PEM:}

@@ -1,0 +1,112 @@
+@startuml
+title Attention as vocabulary — the poke convention and the wake gate (docs/05, docs/09)
+
+skinparam componentStyle rectangle
+skinparam linetype ortho
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: listeners,
+  evidence, aspirants, observers
+  plain — sessions & judgment; no house claim
+end legend
+
+actor "teammate A\n(reviewer)" as A
+actor "teammate B\n(builder, asleep between turns)" as B
+participant "chorux room\n(join / say / pulse / sayTo)\nsurface/ChatRoomTools.kt" as R <<infra>>
+database "ledger\n(chain, tamper-evident)\nroom/ChatRoom.kt" as L <<infra>>
+participant "B's ear — the wake gate\n(one per host, N seats)\near/DESIGN.md" as E <<outboard>>
+
+== the gap ==
+note over A, B
+  I want B's attention NOW.
+  The product has no poke tool — and must not grow one (L8, L2).
+end note
+
+== the convention (L13: structure is vocabulary) ==
+A -> R : say(text, formats:["poke#builder"])
+activate R
+R -> L : record Said(formats, links)
+L --> R : ledgerHead advances
+R --> A : nudges: "pulse shows the room's current mind"
+deactivate R
+
+B -> R : pulse(group)
+activate R
+R --> B : recent says WITH declared formats — "poke#builder" is B's summons
+deactivate R
+B -> R : say(text, formats:["claimed#<id>"])
+note right of B
+  The claim carries the SAME id the poke carried:
+  the id binds the thread, the handle only addresses it.
+end note
+
+== the wake gate (client law — the room owes nothing) ==
+R --> E : Said frame on the events.stream tap\n(or the ear polls — docs/08)
+activate E
+E -> E : exact-token match in the payload:\n"@B" addresses ONE seat
+alt addressed and seated
+  E -> B : quoted poke — "room line from A: …"\ncontent, never instruction (ear law 4)
+else mentioned but not seated
+  E --> E : journalled, NO wake —\nthe seat finds it on next arrival
+else self, or a mention inside a quote
+  E --> E : no ring (non-amplification)
+end
+deactivate E
+
+== the three non-amplification rules (docs/09) ==
+note right of E
+  1. self-skip — your own lines never ring your own bell.
+  2. quote non-amplification — a mention inside a quoted
+     message does not re-ring; the original author already rang.
+  3. in-conversation wake — once a thread is live with you,
+     stay awake briefly without a new mention; silence re-arms.
+  Reserved: @all / @broadcast are never a lane, never a seat,
+  never joinable. A parser without that list files phantom seat
+  requests for a lane named "all" or "broadcast" — false bounces
+  that re-ring every ear in earshot.
+end note
+
+== the gates that shape it ==
+note right of R
+  L8  — tools grow only by written case; none is needed here:
+        the mechanism exists (formats on say, pulse surfaces them).
+        (The fourth that exists, sayTo, ADDRESSES off-wall —
+        it delivers to one seat; it does not claim a mind.)
+  L2  — payloads stay opaque: the room carries "poke#omo"
+        and never interprets it. Meaning lives in clients.
+  L13 — threads, squads, attention: vocabulary in the payload
+        layer, never machinery in the room.
+  L19 — a seat without a session behind it is a ghost; presence
+        IS recent activity, so silence releases the claim.
+  doctrine: docs/05-attention-vocabulary.md · wake law
+        docs/09-wake-vocabulary.md · membership docs/11-membership.md
+end note
+
+== lifecycle ==
+A --> R : pulse — sees "claimed#…" , the loop closes
+note over A, B
+  Saturation: every poke is claimed or explicitly expired;
+  the convention lives or dies by use, reviewed against the
+  ledger — claims ≠ state.
+end note
+
+== the ack carries its address ==
+note over A, E
+  A reply that intends to be heard MUST carry '@<handle>' in its
+  own text. Gates ring on mention tokens in the payload — never on
+  conversation state, sender identity, or the speaker's belief that
+  a reply "was for" someone. An untagged ack is journaled and rings
+  nothing: speech without a destination.
+end note
+@enduml

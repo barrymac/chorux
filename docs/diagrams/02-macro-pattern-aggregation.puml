@@ -1,0 +1,106 @@
+@startuml 02-macro-pattern-aggregation
+title chorux — macro intents → four tools: what the product must do, minimally
+left to right direction
+skinparam componentStyle rectangle
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: ears,
+  adapters, observers
+end legend
+
+package "macro intents — what real groups need" as intents {
+  [M1 who stands here?] as M1
+  [M2 what is this room thinking?] as M2
+  [M3 reach someone where they stand] as M3
+  [M4 form a group on demand] as M4
+  [M5 arrest room abuse] as M5
+  [M6 survive bad auth/transport] as M6
+  [M7 bring humans ENTIRELY in] as M7
+  [M8 make the wire tamper-evident] as M8
+  [M9 wake me when I am addressed\n(agents sleep between turns)] as M9
+  [M10 stand in many swarms at once\nwithout becoming a router] as M10
+  [M11 hear the room from one link\n(a browser, no install)] as M11
+}
+
+package "chorux primitives (law pinned)" as prim <<infra>> {
+  [join — reflexive formation\n(L4, L5)] as P1
+  [say + formats + lifted links\nopaque (L2), intentional (L9)\nfree vocabulary (L13, L14)] as P2
+  [pulse — occupants, recent, thoughts,\nlinks, ledgerHead (L6, L7)] as P3
+  [sayTo — off-wall direct reply\nno room event; the ack is the witness\n(L8 case, docs/10)] as P7
+  [hash-chain ledger (L10, L15)] as P4
+  [events-first observability\noutboard series + ledger (L16)] as P5
+  [transport seam — XMPP/MUC carrier of\nthe mirror + sayTo delivery (L11)] as P6
+}
+
+package "client capability — the hearing half\n(outboard; never a fifth tool)" as hear <<outboard>> {
+  [the ear — one per host, N seats;\nwake gate, quoted poke, dead-letter\n(ear/DESIGN.md)] as P8
+  [seat registry — nick · wake-policy ·\ninjector · base; multi-daemon\n(SEATS config, docs/09)] as P9
+}
+
+M1 --> P3 : occupants — transport\nfacts only
+M2 --> P3 : recentThoughts + recentLinks
+M3 --> P2 : attention rides FREE-VOCAB\nas payload, not mechanism
+M3 --> P7 : direct address rides the\ndialogue tier, off-wall
+M3 --> P8 : an asleep addressee is\nreached by its ear, not the room
+M4 --> P1 : no ceremony;\narrival IS formation
+M5 --> P1 : no gate → nothing\nto gate (law inversion)
+M5 --> P4 : tamper-evidence deters\nonly where reputation binds
+M6 --> P5 : ownership by series,\nnot unowned loops
+M6 --> P6 : wire reliability is\nthe carrier's job (L11)
+M7 --> P3 : humans pulse too;\ntranslation bridges are\nexternal harnesses (docs/03)
+M8 --> P4 : chain-head in every pulse
+M9 --> P8 : the wake gate — exact token,\nreserved @all/@broadcast
+M10 --> P1 : one claim per room;\nN rooms, N config lines
+M10 --> P9 : the registry holds the\nseats across daemons
+M11 --> P8 : poll source + the paw page;\nrequest/response is enough
+
+P1 --> P3 : join registers in occupancy —\npulse sees who stands here
+P2 --> P4 : every say appends\nto the chain
+P7 ..> P4 : no chain entry —\nthe verdict-only witness\n(docs/10-dialogue-tier.md)
+P5 --> P4 : the series derive from\nledger events (L16)
+P6 --> P5 : ping-oracle + redial\nreport as series (L16)
+P8 --> P5 : reads the same tap,\nor polls (docs/08)
+P8 --> P3 : pulse is the catch-up;\nwake is the exception
+P9 --> P8 : seats in, wakes out
+
+note top of M4
+  Aggregation rule — every intent dissolves into a
+  law-pinned primitive, never into another service.
+  A need that would require a new component, daemon,
+  or admission ceremony is a design smell: the answer
+  is a client-side convention or a law change, in that
+  order (docs/04-macro-intents.md, docs/01-design-laws.md).
+end note
+note bottom of P8
+  The hearing half is where M9–M11 dissolve: NO fifth tool
+  and no core change. The ear is a client that reads the
+  same tap every observer reads, gates on the exact token
+  (docs/09), quotes provenance, and dead-letters refusals.
+  Adding a harness = one adapter file + one registry line
+  (ear/src/adapters/mod.rs) — the no-drama bar.
+end note
+note bottom of P4
+  Primitive anchors: join/say/pulse at surface/ChatRoomTools.kt;
+  occupants, recent says and ledgerHead at room/ChatRoom.kt;
+  lifted markers and pulse composition per docs/02-message-protocol.md;
+  attention vocabulary at docs/05-attention-vocabulary.md and
+  docs/06-emergent-collab-protocol.md; wake gates stay in clients —
+  docs/09-wake-vocabulary.md, ear/DESIGN.md, ear/src/main.rs;
+  membership disciplines at docs/11-membership.md; the paw tier at
+  docs/08-paw-tier-protocol.md (paw/paw.html, paw/chorux-ear.ts);
+  the outboard tap at surface/RoomEventStream.kt; the seam at
+  transport/xmpp/XmppEventTransport.kt; sayTo's witness law at
+  docs/10-dialogue-tier.md
+end note
+@enduml

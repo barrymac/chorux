@@ -1,0 +1,17 @@
+[package]
+name = "chorux-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "The I3 duplex bridge: rail MUC -> chorux room ingress + PM control channel (bridge/DESIGN.md)"
+license = "MIT"
+publish = false
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "fs"] }
+tokio-xmpp = { version = "6", default-features = false, features = ["starttls", "ring", "rustls-native-certs"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+rxml = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pico-args = "0.5"

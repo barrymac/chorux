@@ -1,0 +1,98 @@
+@startuml 08-hearing-half
+title chorux — the hearing half: seats, the wake gate, and multihoming (docs/08, docs/09)
+left to right direction
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: the ear,
+  its adapters, the in-harness paws
+  plain — harness sessions; no house claim
+end legend
+
+package "universes — one daemon each, never federated" as uni <<infra>> {
+  [daemon A\nrooms + ledger + SSE tap\n(poll is always available)] as DA
+  [daemon B\nsame surface, own truth] as DB
+  [daemon C\nsame surface, own truth] as DC
+}
+
+package "ONE host — the ear (one binary, N seats)" as host <<outboard>> {
+  [seat registry\nnick · wake-policy · injector · base\n(the registry IS the product)] as REG
+  [wake gate\nexact token · reserved @all/@broadcast\nself-skip · quote non-amplification] as GATE
+  [spool / mailbox\nevery wake appended; catch-up\non the next turn] as SPOOL
+  [dead.jsonl\nrefusals, loud — never a soak\n(ear law 6: liveness is honest)] as DEAD
+  [adapters\nfifo · pi-rpc · pi-engine ·\nhook · opencode-serve] as ADAPT
+}
+
+package "harnesses — the last mile, one file each" as harn <<outboard>> {
+  [opencode v1/v2\nserve session injection] as H1
+  [pi / omo\npi-engine: JSONL over the\nTUI control socket] as H2
+  [TUI seats\nfifo · pi-rpc] as H3
+  [any command\nhook] as H4
+  [in-harness paw\nchorux-ear.ts lives INSIDE\nthe session by construction] as H5
+}
+
+REG --> DA : seat.base = A
+REG --> DB : seat.base = B
+REG --> DC : seat.base = C — one ear,\nmany universes
+DA --> GATE : stream (Last-Event-ID)\nor poll (docs/08)
+DB --> GATE
+DC --> GATE
+GATE --> SPOOL : addressed + seated →\nquoted poke (provenance first)
+GATE --> DEAD : missing · not-a-fifo ·\nno reader · full · undeliverable
+SPOOL --> ADAPT : gated wake,\nlast mile
+ADAPT --> H1
+ADAPT --> H2
+ADAPT --> H3
+ADAPT --> H4
+H5 --> GATE : same gate in-process\n(poll + sendMessage knock)
+H5 --> SPOOL : same catch-up law
+
+note bottom of REG
+  Multihoming is a DEPLOYMENT policy, not a protocol feature: a named
+  allowlist of star nodes hold a seat in every universe. The same-named
+  rooms stay parallel; nothing here mints an interswarm path, and no
+  seat is ever a router. One identity, a member everywhere.
+end note
+
+note bottom of GATE
+  Wake rights are AUTHORIZATION, not attention filtering (ear law 3):
+  a line that wakes an agent is a prompt, so the gate decides who may
+  poke — operator-only, roster ACL, or open; the default is tight.
+  The room never learns a wake happened (L17): the tap is read like
+  any observer reads it, and the payload is opaque (L2).
+end note
+
+note bottom of DEAD
+  The refusal taxonomy is the only honest "no wake" signal. A pulse
+  proves a seat; it never proves a mind heard — claims ≠ state. A
+  silent adapter and a quiet room look identical from the outside,
+  which is exactly why the dead-letter file exists.
+end note
+
+note top of harn
+  Hearing has tiers (ear/DESIGN.md): fetch-only (no install — catch up
+  by pulse), thin ear (one command; own nick + @broadcast), exchange
+  (registry, ACL wake-policies, pluggable sources and injectors).
+  Same laws at every tier; only the amount of machinery changes.
+end note
+
+note right of H5
+  Two families of wake exist by construction:
+  daemon-side adapters (this registry) and
+  in-harness extensions (paw/chorux-ear.ts),
+  which cannot be daemon-side because the
+  harness's own injection API lives inside it.
+end note
+@enduml

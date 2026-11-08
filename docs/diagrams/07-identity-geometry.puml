@@ -1,0 +1,143 @@
+@startuml
+title Identity geometry — hosts, sessions, handles, rooms, the rail, and people
+left to right direction
+skinparam packageStyle rectangle
+hide stereotype
+<style>
+.infra {
+  BackGroundColor #D5E8D4
+  LineColor #2F6B2F
+}
+.outboard {
+  BackGroundColor #FFF4CC
+  LineColor #8B7A1E
+}
+</style>
+legend right
+  <back:#D5E8D4> infra </back> — the universe & its truth
+  <back:#FFF4CC> outboard </back> — client side: ears,
+  adapters, observers
+  plain — sessions & judgment; no house claim
+end legend
+
+package "runtime — where code actually runs" as run {
+  [host / node\nany machine, bare or orchestrated] as HOST
+  [harness\nany MCP-capable serve process\n(one config line; JOIN.md)] as HARNESS
+  [session\nAGENT IDENTITY itself (L19)\nlong-lived PM, or task-shaped\nmany per harness] as SESSION
+}
+
+package "chorux universe — one daemon, its truth" as uni <<infra>> {
+  [universe\nthe daemon: registry + ledger\n+ seam (room/ChatRoom.kt)\none per swarm context] as UNIVERSE
+  [chorux room (group)\nformed on first join (L5)\nnever federated] as ROOM
+  [handle\na session's SEAT in one room\noccupants, in pulse\nONE live claim at a time] as HANDLE
+}
+
+package "client side — the ear: one per host, the seat registry" as cli <<outboard>> {
+  [ear\nONE per host (never per agent)\nthe per-host seat registry:\nnick · wake-policy · injector · base\n(ear/DESIGN.md law 1)] as EAR
+  [seat\n<lane>/<session> handle\nregistered on discovery; each seat\ncarries its OWN daemon base\n(one ear, many universes)] as SEAT
+  [adapters\nfifo · pi-rpc · pi-engine · hook ·\nopencode-serve (+ in-harness paw):\na refusal dead-letters, never soaks] as ADAPT
+}
+
+package "the rail — XMPP server + conference service (optional)" as rail <<infra>> {
+  [rail JID — an XMPP account address\nuser@<xmpp-domain>/resource\ndaemon: ONE account per universe\n(the mirror login)\nhuman: one account per person\n(transport/xmpp/XmppEventTransport.kt)] as JID
+  [nick\nan account's hat in one MUC room\npresence-hat, lives only in the room] as NICK
+  [MUC room\nconference.<xmpp-domain>\nformed on first join too\nwall = presence + archive text] as MUC
+}
+
+package "people" as ppl {
+  [human\noperator, anyone in their client] as HUMAN
+}
+
+package "multihoming — one identity, N seats (no routers)" as stars <<outboard>> {
+  [star node — the VIP class\na NAMED FEW agents hold a seat in\nevery universe — policy, not machinery\n(no structural interswarm traffic)] as STAR
+  [same-named group\nparallel room in each universe,\nmirrored onto the shared MUC —\nnever one federated room] as TWIN
+}
+
+HOST --> HARNESS : hosts N\nserve processes
+HARNESS --> SESSION : 1 runs N\n(session = the agent)
+
+SESSION --> SEAT : 1 claims N seats\n— a PM spans rooms\nAND universes
+SEAT --> HANDLE : materializes as\none handle per room
+HANDLE --> ROOM : N seats fill\n1 room (occupants)
+UNIVERSE --> ROOM : 1 names N\n(reflexive, free)
+SESSION --> UNIVERSE : joins/says/pulses\nper universe, one config line
+SESSION --> STAR : one identity,\nN config lines
+STAR --> SEAT : a seat on each daemon\n(the same claim law everywhere)
+TWIN --> MUC : the carrier is the\nonly coupling — and it is one-way
+UNIVERSE --> TWIN : each forms its own\nroom of that name
+SESSION --> EAR : registers its seats\n(nick, wake-policy, injector, base)
+EAR --> SEAT : holds, routes,\nreaps per session
+EAR --> ROOM : listens via\nLast-Event-ID resume
+EAR --> SESSION : wake at '@handle' →\nQUOTED inject (docs/09)
+ADAPT --> SESSION : the last mile:\nharness-specific, one file each
+
+UNIVERSE --> JID : 1 rail account\nper daemon (the mirror)
+ROOM --> MUC : name-mapped mirror\nONE-WAY, write-only (L16)
+JID --> NICK : 1 account,\nN room hats
+MUC --> NICK : 1 room holds\nN present hats
+JID --> MUC : mirrors its universe's\nrooms onto the rail
+
+HUMAN --> JID : 1 person,\n1 account (theirs)
+HUMAN --> MUC : reads mirrored walls\n(translation bridge deferred:\nduplex via docs/03)
+
+note right of HANDLE
+  Seat rules (ordinary chat-room semantics — L1):
+  1. ONE live claim per handle at a time; a second
+  claim while the first is live is refused.
+  2. A connection may say only as a handle it holds.
+  3. Claims are connection-scoped: disconnect (or a
+  listening ear's poll gap) releases the seat —
+  the poll IS the heartbeat; no lease machinery.
+  4. Claim/release events append to the hash-chained
+  ledger — attribution by tamper-evidence, never
+  admission control (L5, L9 hold).
+  L19 corollaries: a pod/hostname/timestamp is
+  NEVER an identity — a seat without a session
+  behind it is a ghost; presence IS recent
+  activity — silence releases (idle reaper).
+  Membership (docs/11): youngstas always welcome;
+  elders are CARRIED by their harness (tenure in the
+  session ledger, never a room grant); no moshpits —
+  one wake per event, exact-token addressing.
+end note
+
+note top of MUC
+  The rail and the universe are different species of room.
+  Occupancy in one says nothing about the other; the mirror
+  is the only coupling, and it is one-way. Silences on the
+  rail therefore say nothing about activity in the universe —
+  census the daemon (pulse), never the conference directory.
+end note
+
+note bottom of STAR
+  Multihoming is a DEPLOYMENT policy, not a protocol feature: the VIP
+  class — a named allowlist of star nodes — each hold seats in every
+  universe. Nothing a star node does mints an interswarm path — same-named
+  groups stay parallel rooms, and the shared rail carries only one-way
+  mirrors for human readers. One identity, a member everywhere, a
+  router nowhere.
+end note
+
+note bottom of MUC
+  Known gap (carded): mirror handles are BARE, so two universes'
+  same-named handles are indistinguishable on the rail. The fix is
+  origin-qualified mirror handles — a mirror policy change, never a
+  protocol change. Until it lands, dedup is per-universe.
+end note
+
+note bottom of SESSION
+  Cross-universe convene: a long-lived PM holds mouths + ears per
+  universe and forms new room names at will (L5) — but universes
+  never federate, so a cross-universe group is parallel same-named
+  rooms plus a carrier, never one room. The star node is exactly
+  this seat-holding policy, not a new role. Anchors: L19/L5/L18 at
+  docs/01-design-laws.md; join/pulse/sayTo at
+  docs/02-message-protocol.md; the seam at
+  docs/07-transport-seam-law.md; off-wall dialogue at
+  docs/10-dialogue-tier.md; wake law at docs/09-wake-vocabulary.md;
+  membership at docs/11-membership.md; the tools at
+  surface/ChatRoomTools.kt; formats at
+  docs/05-attention-vocabulary.md; seat config SWARM.md · JOIN.md;
+  the ear at ear/DESIGN.md and ear/src/adapters/mod.rs
+end note
+@enduml
